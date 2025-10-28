@@ -1,0 +1,22 @@
+# Sonarr Size Analyzer - Extended Edition
+# Python 3.10+
+
+# Web Framework
+streamlit==1.29.0
+
+# HTTP Requests
+requests==2.31.0
+urllib3==2.1.0
+
+# Data Processing
+pandas==2.1.4
+numpy==1.26.2
+
+# Visualization
+plotly==5.18.0
+matplotlib==3.8.2
+seaborn==0.13.0
+
+# Security & Encryption
+cryptography==41.0.7
+

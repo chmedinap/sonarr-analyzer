@@ -1,0 +1,88 @@
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation (not needed in image)
+*.md
+docs/
+*.ipynb
+
+# Tests
+tests/
+test_*.py
+*_test.py
+.pytest_cache/
+.coverage
+
+# Data files (don't include in image)
+*.csv
+*.json
+data/
+*.db
+*.enc
+*_salt
+
+# Environment
+.env
+.env.*
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache/
+*.cache
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Backup files
+*_backup.py
+*_extended.py
+*_original*.py
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Project specific
+export_*.csv
+sonarr_*.csv
+sonarr_analysis.ipynb
+

@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  sonarr-analyzer:
+    # Para usar la imagen de Docker Hub (una vez publicada)
+    image: martitoci/sonarr-analyzer:latest
+    
+    # O para construir localmente:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    
+    container_name: sonarr-size-analyzer
+    
+    ports:
+      - "8501:8501"
+    
+    environment:
+      # Streamlit configuration
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      
+      # Optional: Pre-configure Sonarr connection (NOT RECOMMENDED for security)
+      # - SONARR_URL=http://sonarr:8989
+      # - SONARR_API_KEY=your_api_key_here
+    
+    # Persistent data volume for history and encrypted credentials
+    volumes:
+      - sonarr-data:/app/data
+      # Or use local directory:
+      # - ./data:/app/data
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    networks:
+      - sonarr-network
+    
+    # Security hardening
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    tmpfs:
+      - /tmp
+    
+    # Resource limits (adjust based on your library size)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+volumes:
+  sonarr-data:
+    driver: local
+
+networks:
+  sonarr-network:
+    driver: bridge
+
+# Example: If you want to run Sonarr alongside this analyzer
+# Uncomment the section below
+
+# services:
+#   sonarr:
+#     image: linuxserver/sonarr:latest
+#     container_name: sonarr
+#     environment:
+#       - PUID=1000
+#       - PGID=1000
+#       - TZ=America/New_York
+#     volumes:
+#       - ./sonarr-config:/config
+#       - /path/to/tv:/tv
+#       - /path/to/downloads:/downloads
+#     ports:
+#       - "8989:8989"
+#     restart: unless-stopped
+#     networks:
+#       - sonarr-network
+
