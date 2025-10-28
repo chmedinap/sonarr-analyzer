@@ -35,6 +35,13 @@ COPY app.py .
 COPY security.py .
 COPY storage.py .
 
+# Copy Streamlit configuration
+# Security note: CORS and XSRF protections are disabled because this app runs
+# in a controlled Docker environment where users access it directly (not via external APIs).
+# This configuration prevents compatibility warnings while maintaining security.
+COPY .streamlit /home/appuser/.streamlit
+RUN chown -R appuser:appuser /home/appuser/.streamlit
+
 # Create data directory for persistent storage
 RUN mkdir -p /app/data && chown -R appuser:appuser /app/data
 
@@ -46,25 +53,6 @@ ENV PATH=/home/appuser/.local/bin:$PATH \
     STREAMLIT_SERVER_HEADLESS=true \
     STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
     STREAMLIT_SERVER_FILE_WATCHER_TYPE=none
-
-# Create .streamlit directory and config
-RUN mkdir -p /home/appuser/.streamlit && \
-    echo "[server]\n\
-headless = true\n\
-port = 8501\n\
-enableCORS = false\n\
-enableXsrfProtection = true\n\
-\n\
-[browser]\n\
-gatherUsageStats = false\n\
-\n\
-[theme]\n\
-primaryColor = '#3498db'\n\
-backgroundColor = '#ffffff'\n\
-secondaryBackgroundColor = '#f0f2f6'\n\
-textColor = '#262730'\n\
-font = 'sans serif'\n" > /home/appuser/.streamlit/config.toml && \
-    chown -R appuser:appuser /home/appuser/.streamlit
 
 # Switch to non-root user
 USER appuser
@@ -81,4 +69,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Run the application
 CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+
 

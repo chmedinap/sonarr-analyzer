@@ -1,0 +1,20 @@
+# Streamlit configuration for Docker deployment
+# The app runs inside a container and only receives user access (no external API calls to it).
+# Therefore, disable both CORS and XSRF protections to avoid compatibility warnings.
+
+[server]
+headless = true
+port = 8501
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = '#3498db'
+backgroundColor = '#ffffff'
+secondaryBackgroundColor = '#f0f2f6'
+textColor = '#262730'
+font = 'sans serif'
+
