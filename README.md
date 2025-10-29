@@ -97,6 +97,18 @@ docker-compose up -d
 
 ---
 
+## 📸 Screenshots
+
+### Dashboard & Analysis
+![Sonarr Analyzer Dashboard](images/image1.png)
+*Main dashboard showing series analysis with file sizes, outliers, and detailed metrics*
+
+### User Management & Configuration
+![User Management Interface](images/image2.png)
+*Admin interface for managing users, roles, and secure token configuration*
+
+---
+
 ## 📖 Usage Guide
 
 ### First Time Setup
