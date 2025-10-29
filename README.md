@@ -557,7 +557,7 @@ docker pull martitoci/sonarr-analyzer:latest
 2. Each user configures their own Sonarr instance
 3. Read-only users can view but not modify
 4. Separate histories per user
-```chmedinap
+```
 
 ---
 
