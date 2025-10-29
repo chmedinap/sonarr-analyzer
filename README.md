@@ -557,7 +557,7 @@ docker pull martitoci/sonarr-analyzer:latest
 2. Each user configures their own Sonarr instance
 3. Read-only users can view but not modify
 4. Separate histories per user
-```
+```chmedinap
 
 ---
 
@@ -567,7 +567,7 @@ If you want to build the image locally:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/sonarr-analyzer.git
+git clone https://github.com/chmedinap/sonarr-analyzer.git
 cd sonarr-analyzer
 
 # Build the image
