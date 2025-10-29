@@ -429,7 +429,7 @@ Access at: http://localhost:9000
 - **Architecture:** linux/amd64, linux/arm64
 - **Size:** ~280 MB (includes new dependencies)
 - **User:** Non-root (UID 1000)
-- **Health Check:** Built-in
+- **Health Check:** Built-in (Python-based, no curl required)
 
 ### Ports
 
