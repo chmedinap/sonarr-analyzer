@@ -1,4 +1,4 @@
-# Sonarr Size Analyzer - Extended Edition
+# Sonarr Analyzer v0.3
 # Python 3.10+
 
 # Web Framework
@@ -19,5 +19,10 @@ seaborn==0.13.0
 
 # Security & Encryption
 cryptography==41.0.7
+bcrypt==4.1.2
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
 
 

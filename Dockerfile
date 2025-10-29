@@ -1,4 +1,4 @@
-# Sonarr Series Size Analyzer - Extended Edition
+# Sonarr Analyzer v0.3
 # Multi-stage build for optimized image size
 
 FROM python:3.11-slim as builder
@@ -32,6 +32,7 @@ COPY --from=builder /root/.local /home/appuser/.local
 
 # Copy application code
 COPY app.py .
+COPY auth.py .
 COPY security.py .
 COPY storage.py .
 

@@ -1,7 +1,7 @@
 """
-Sonarr Series Size Analyzer - Extended Version with Historical Tracking
+Sonarr Analyzer v0.3
 Analyzes average file size per episode for TV series managed by Sonarr.
-Includes encrypted credential storage and historical data comparison.
+Now with user authentication, role-based access, and per-user encrypted token storage.
 """
 
 import streamlit as st
@@ -18,12 +18,13 @@ import io
 from pathlib import Path
 
 # Import custom modules
-from security import CredentialManager
+from auth import UserManager
+from security import TokenManager
 from storage import HistoryDatabase
 
 # Page configuration
 st.set_page_config(
-    page_title="Sonarr Size Analyzer - Extended",
+    page_title="Sonarr Analyzer",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -35,14 +36,19 @@ DEFAULT_Z_THRESHOLD = 2.0
 MAX_RETRIES = 2
 MAX_RESPONSE_SIZE = 200 * 1024 * 1024  # 200 MB
 DB_PATH = "data/sonarr_history.db"
-CREDENTIALS_FILE = "data/.sonarr_credentials.enc"
+USER_DB_PATH = "data/users.db"
+TOKEN_DB_PATH = "data/tokens.db"
+MASTER_KEY_PATH = "data/.master.key"
 
 # Ensure data directory exists
 Path("data").mkdir(exist_ok=True)
 
 # Initialize managers
-if 'credential_manager' not in st.session_state:
-    st.session_state.credential_manager = CredentialManager(CREDENTIALS_FILE)
+if 'user_manager' not in st.session_state:
+    st.session_state.user_manager = UserManager(USER_DB_PATH)
+
+if 'token_manager' not in st.session_state:
+    st.session_state.token_manager = TokenManager(TOKEN_DB_PATH, MASTER_KEY_PATH)
 
 if 'history_db' not in st.session_state:
     st.session_state.history_db = HistoryDatabase(DB_PATH)
@@ -68,6 +74,49 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
+# ============================================================================
+# AUTHENTICATION FUNCTIONS
+# ============================================================================
+
+def logout():
+    """Logout current user."""
+    for key in ['logged_in', 'user', 'current_sonarr_url', 'current_api_key']:
+        if key in st.session_state:
+            del st.session_state[key]
+    st.rerun()
+
+
+def is_logged_in() -> bool:
+    """Check if user is logged in."""
+    return st.session_state.get('logged_in', False) and st.session_state.get('user') is not None
+
+
+def is_admin() -> bool:
+    """Check if current user is admin."""
+    if not is_logged_in():
+        return False
+    return st.session_state.user.get('role') == 'admin'
+
+
+def load_user_token():
+    """Load and decrypt user's Sonarr token."""
+    if not is_logged_in():
+        return
+    
+    user_id = st.session_state.user['id']
+    token_mgr = st.session_state.token_manager
+    
+    success, data, msg = token_mgr.load_token(user_id)
+    
+    if success:
+        st.session_state.current_sonarr_url = data['sonarr_url']
+        st.session_state.current_api_key = data['api_token']
+
+
+# ============================================================================
+# SONARR API FUNCTIONS
+# ============================================================================
 
 def validate_url(url: str) -> Tuple[bool, str, str]:
     """Validate and sanitize base URL."""
@@ -111,7 +160,7 @@ def fetch_sonarr_data(
             
             content_length = response.headers.get('content-length')
             if content_length and int(content_length) > MAX_RESPONSE_SIZE:
-                return None, f"Response too large: {int(content_length) / (1024**2):.1f} MB"
+                return None, f"Response too large: {int(content_length) / (1024**2):.2f} MB"
             
             if response.status_code == 401:
                 return None, "❌ Authentication failed: Invalid API key"
@@ -259,172 +308,317 @@ def detect_outliers(
 
 
 # ============================================================================
-# CONFIGURATION PAGE
+# FIRST RUN: CREATE ADMIN PAGE
 # ============================================================================
 
-def show_configuration_page():
-    """Display configuration page for credentials and settings."""
-    st.title("⚙️ Configuration")
+def show_first_run_page():
+    """Display first-run admin creation page."""
+    st.title("🚀 Welcome to Sonarr Analyzer v0.3")
     
-    st.markdown("### Sonarr Connection")
+    st.markdown("""
+    ### First Time Setup
     
-    cred_manager = st.session_state.credential_manager
+    No administrator account exists yet. Please create your admin account to get started.
     
-    # Check if credentials exist
-    creds_exist = cred_manager.credentials_exist()
+    The admin account will have full access to:
+    - Connect and analyze Sonarr instances
+    - View all reports and visualizations
+    - Create read-only user accounts
+    - Manage user settings
+    """)
     
-    if creds_exist:
-        st.success("✅ Encrypted credentials found")
+    st.markdown("---")
+    
+    st.markdown("### Create Administrator Account")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        username = st.text_input(
+            "Username",
+            placeholder="admin",
+            help="Must be at least 3 characters"
+        )
+    
+    with col2:
+        password = st.text_input(
+            "Password",
+            type="password",
+            placeholder="Enter a strong password",
+            help="Must be at least 8 characters"
+        )
+    
+    password_confirm = st.text_input(
+        "Confirm Password",
+        type="password",
+        placeholder="Re-enter password"
+    )
+    
+    if st.button("Create Admin Account", type="primary"):
+        if not username or not password:
+            st.error("Please fill in all fields")
+        elif len(username) < 3:
+            st.error("Username must be at least 3 characters")
+        elif len(password) < 8:
+            st.error("Password must be at least 8 characters")
+        elif password != password_confirm:
+            st.error("Passwords do not match")
+        else:
+            user_mgr = st.session_state.user_manager
+            success, msg = user_mgr.create_user(username, password, 'admin')
+            
+            if success:
+                st.success("✅ Admin account created successfully!")
+                st.info("Please login with your new credentials")
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.error(f"Failed to create account: {msg}")
+
+
+# ============================================================================
+# LOGIN PAGE
+# ============================================================================
+
+def show_login_page():
+    """Display login page."""
+    st.title("🔐 Login to Sonarr Analyzer")
+    
+    st.markdown("### Enter Your Credentials")
+    
+    username = st.text_input("Username", placeholder="Enter your username")
+    password = st.text_input("Password", type="password", placeholder="Enter your password")
+    
+    if st.button("Login", type="primary"):
+        if not username or not password:
+            st.error("Please enter both username and password")
+        else:
+            user_mgr = st.session_state.user_manager
+            success, user, msg = user_mgr.authenticate(username, password)
+            
+            if success:
+                st.session_state.logged_in = True
+                st.session_state.user = user
+                
+                # Load user's token if exists
+                load_user_token()
+                
+                st.success(f"✅ Welcome back, {user['username']}!")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error(f"Login failed: {msg}")
+
+
+# ============================================================================
+# TOKEN CONFIGURATION PAGE
+# ============================================================================
+
+def show_token_config_page():
+    """Display token configuration page for current user."""
+    st.title("🔑 Sonarr Configuration")
+    
+    user_id = st.session_state.user['id']
+    username = st.session_state.user['username']
+    token_mgr = st.session_state.token_manager
+    
+    st.markdown(f"### Configure Sonarr Connection for **{username}**")
+    
+    # Check if user has saved token
+    has_token = token_mgr.has_token(user_id)
+    
+    if has_token:
+        st.success("✅ You have a saved Sonarr configuration")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("🔓 Load Saved Credentials", type="primary"):
-                st.session_state.show_load_creds = True
+            if st.button("🔓 Load Saved Configuration", type="primary"):
+                success, data, msg = token_mgr.load_token(user_id)
+                if success:
+                    st.session_state.current_sonarr_url = data['sonarr_url']
+                    st.session_state.current_api_key = data['api_token']
+                    st.success("✅ Configuration loaded successfully!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error(f"Failed to load: {msg}")
         
         with col2:
-            if st.button("🗑️ Delete Saved Credentials", type="secondary"):
-                success, msg = cred_manager.delete_credentials()
+            if st.button("🗑️ Delete Configuration", type="secondary"):
+                success, msg = token_mgr.delete_token(user_id)
                 if success:
                     st.success(msg)
-                    st.session_state.base_url = ""
-                    st.session_state.api_key = ""
+                    if 'current_sonarr_url' in st.session_state:
+                        del st.session_state.current_sonarr_url
+                    if 'current_api_key' in st.session_state:
+                        del st.session_state.current_api_key
                     st.rerun()
                 else:
                     st.error(msg)
-        
-        if st.session_state.get('show_load_creds', False):
-            st.markdown("---")
-            st.markdown("#### Load Encrypted Credentials")
-            
-            passphrase = st.text_input(
-                "Enter passphrase to decrypt",
-                type="password",
-                key="load_passphrase"
-            )
-            
-            if st.button("Load"):
-                if passphrase:
-                    success, creds, msg = cred_manager.load_credentials(passphrase)
-                    
-                    if success:
-                        st.session_state.base_url = creds['base_url']
-                        st.session_state.api_key = creds['api_key']
-                        st.session_state.show_load_creds = False
-                        st.success("✅ Credentials loaded successfully!")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error(msg)
-                else:
-                    st.warning("Please enter passphrase")
     
     st.markdown("---")
-    st.markdown("### Manual Configuration")
+    st.markdown("### Enter Sonarr Connection Details")
     
-    # Manual inputs
-    base_url = st.text_input(
+    current_url = st.session_state.get('current_sonarr_url', '')
+    current_key = st.session_state.get('current_api_key', '')
+    
+    sonarr_url = st.text_input(
         "Sonarr URL",
-        value=st.session_state.get('base_url', ''),
+        value=current_url,
         placeholder="http://localhost:8989",
-        help="URL where your Sonarr instance is accessible",
-        key="config_base_url"
+        help="URL where your Sonarr instance is accessible"
     )
     
     api_key = st.text_input(
         "API Key",
-        value=st.session_state.get('api_key', ''),
+        value=current_key,
         type="password",
         placeholder="Your API key",
-        help="Found in Sonarr → Settings → General → Security",
-        key="config_api_key"
+        help="Found in Sonarr → Settings → General → Security"
     )
     
-    # Save credentials option
-    st.markdown("---")
-    st.markdown("### Save Credentials (Encrypted)")
+    col1, col2 = st.columns(2)
     
-    st.warning("""
-    ⚠️ **Security Information:**
-    - Credentials will be encrypted with AES-256 using your passphrase
-    - You must remember your passphrase (cannot be recovered)
-    - Passphrase should be at least 8 characters
-    - Files stored: `.sonarr_credentials.enc`, `.sonarr_salt`
-    """)
-    
-    save_creds = st.checkbox(
-        "I want to save these credentials encrypted",
-        value=False
-    )
-    
-    if save_creds and base_url and api_key:
-        passphrase = st.text_input(
-            "Create a strong passphrase (min 8 characters)",
-            type="password",
-            help="This passphrase will be required to decrypt your credentials",
-            key="save_passphrase"
-        )
-        
-        passphrase_confirm = st.text_input(
-            "Confirm passphrase",
-            type="password",
-            key="save_passphrase_confirm"
-        )
-        
-        if st.button("💾 Save Encrypted Credentials", type="primary"):
-            if len(passphrase) < 8:
-                st.error("Passphrase must be at least 8 characters")
-            elif passphrase != passphrase_confirm:
-                st.error("Passphrases don't match")
+    with col1:
+        if st.button("💾 Save Configuration", type="primary"):
+            if not sonarr_url or not api_key:
+                st.error("Please enter both URL and API key")
             else:
-                success, msg = cred_manager.save_credentials(
-                    base_url,
-                    api_key,
-                    passphrase
-                )
-                
+                success, msg = token_mgr.save_token(user_id, sonarr_url, api_key)
                 if success:
-                    st.success(msg)
-                    st.session_state.base_url = base_url
-                    st.session_state.api_key = api_key
+                    st.session_state.current_sonarr_url = sonarr_url
+                    st.session_state.current_api_key = api_key
+                    st.success("✅ Configuration saved and encrypted!")
                     st.balloons()
                 else:
-                    st.error(msg)
+                    st.error(f"Failed to save: {msg}")
     
-    elif save_creds:
-        st.info("Please enter both URL and API key above to save")
-    
-    # Apply button for manual config
-    if not save_creds:
-        if st.button("Apply Configuration", type="primary"):
-            if base_url and api_key:
-                st.session_state.base_url = base_url
-                st.session_state.api_key = api_key
-                st.success("✅ Configuration applied!")
+    with col2:
+        if st.button("✓ Use Without Saving"):
+            if not sonarr_url or not api_key:
+                st.error("Please enter both URL and API key")
             else:
-                st.warning("Please enter both URL and API key")
+                st.session_state.current_sonarr_url = sonarr_url
+                st.session_state.current_api_key = api_key
+                st.success("✅ Configuration set for this session!")
 
 
 # ============================================================================
-# ANALYSIS PAGE (Original functionality)
+# USER MANAGEMENT PAGE (Admin Only)
+# ============================================================================
+
+def show_user_management_page():
+    """Display user management page for admins."""
+    if not is_admin():
+        st.error("⛔ Access Denied: Admin privileges required")
+        return
+    
+    st.title("👥 User Management")
+    
+    user_mgr = st.session_state.user_manager
+    
+    # Create new user section
+    st.markdown("### Create New User")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        new_username = st.text_input("Username", key="new_user_username")
+    
+    with col2:
+        new_password = st.text_input("Password", type="password", key="new_user_password")
+    
+    with col3:
+        new_role = st.selectbox("Role", options=["readonly", "admin"], key="new_user_role")
+    
+    if st.button("Create User", type="primary"):
+        if not new_username or not new_password:
+            st.error("Please fill in all fields")
+        else:
+            success, msg = user_mgr.create_user(new_username, new_password, new_role)
+            if success:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+    
+    st.markdown("---")
+    
+    # List existing users
+    st.markdown("### Existing Users")
+    
+    users = user_mgr.list_users()
+    
+    if users:
+        for user in users:
+            with st.expander(f"👤 {user['username']} ({user['role']})"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write(f"**ID:** {user['id']}")
+                    st.write(f"**Role:** {user['role']}")
+                    st.write(f"**Created:** {user['created_at'][:10]}")
+                
+                with col2:
+                    last_login = user['last_login']
+                    if last_login:
+                        st.write(f"**Last Login:** {last_login[:16]}")
+                    else:
+                        st.write("**Last Login:** Never")
+                    
+                    st.write(f"**Active:** {'Yes' if user['is_active'] else 'No'}")
+                
+                # Delete user button (can't delete yourself or last admin)
+                if user['id'] != st.session_state.user['id']:
+                    if st.button(f"🗑️ Delete User", key=f"delete_{user['id']}"):
+                        success, msg = user_mgr.delete_user(user['id'])
+                        if success:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                else:
+                    st.info("You cannot delete your own account")
+    else:
+        st.info("No users found")
+
+
+# ============================================================================
+# ANALYSIS PAGE
 # ============================================================================
 
 def show_analysis_page():
     """Display current analysis page."""
     st.title("📊 Current Analysis")
     
-    # Check if credentials are configured
-    base_url = st.session_state.get('base_url', '')
-    api_key = st.session_state.get('api_key', '')
+    user_id = st.session_state.user['id']
+    username = st.session_state.user['username']
+    role = st.session_state.user['role']
     
-    if not base_url or not api_key:
-        st.warning("⚠️ Please configure your Sonarr credentials in the Configuration page")
-        st.info("Go to **⚙️ Configuration** in the sidebar to set up your connection")
+    # Check if user has configured Sonarr
+    sonarr_url = st.session_state.get('current_sonarr_url', '')
+    api_key = st.session_state.get('current_api_key', '')
+    
+    if not sonarr_url or not api_key:
+        st.warning("⚠️ Please configure your Sonarr connection first")
+        st.info("Go to **🔑 Configuration** in the sidebar to set up your Sonarr credentials")
+        return
+    
+    # Check read-only restriction
+    if role == 'readonly':
+        st.info("ℹ️ You have read-only access. You can view results but cannot run new analyses.")
+        st.info("Contact your administrator for analysis permissions.")
+        
+        # Show last analysis if available
+        if 'analysis_df' in st.session_state and st.session_state.get('analysis_df') is not None:
+            display_analysis_results()
         return
     
     # Show current configuration
     with st.expander("🔧 Current Configuration"):
-        st.write(f"**Sonarr URL:** {base_url}")
+        st.write(f"**User:** {username}")
+        st.write(f"**Sonarr URL:** {sonarr_url}")
         st.write(f"**API Key:** {'*' * 20}{api_key[-4:]}")
     
     # Advanced options
@@ -462,7 +656,7 @@ def show_analysis_page():
     
     # Analyze button
     if st.button("🚀 Run Analysis", type="primary"):
-        is_valid, base_url, error = validate_url(base_url)
+        is_valid, sonarr_url, error = validate_url(sonarr_url)
         if not is_valid:
             st.error(f"❌ Invalid URL: {error}")
             return
@@ -472,7 +666,7 @@ def show_analysis_page():
                 # Fetch series
                 series_data, error = fetch_sonarr_data(
                     "api/v3/series",
-                    base_url,
+                    sonarr_url,
                     api_key,
                     timeout
                 )
@@ -500,7 +694,7 @@ def show_analysis_page():
                 
                 episodefile_df, error = fetch_all_episode_files(
                     series_data,
-                    base_url,
+                    sonarr_url,
                     api_key,
                     timeout
                 )
@@ -528,6 +722,7 @@ def show_analysis_page():
             # Save to history if requested
             if save_to_history:
                 success, msg = st.session_state.history_db.save_analysis(
+                    user_id,
                     analysis_df,
                     stats,
                     overwrite=True
@@ -551,98 +746,108 @@ def show_analysis_page():
     
     # Display results if available
     if 'analysis_df' in st.session_state and st.session_state['analysis_df'] is not None:
-        analysis_df = st.session_state['analysis_df']
-        stats = st.session_state['stats']
+        display_analysis_results()
+
+
+def display_analysis_results():
+    """Display analysis results from session state."""
+    analysis_df = st.session_state['analysis_df']
+    stats = st.session_state['stats']
+    
+    st.markdown("---")
+    
+    # Summary metrics with 2 decimal places
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        st.metric("Total Series", len(analysis_df))
+    
+    with col2:
+        total_episodes = int(analysis_df['episode_count'].sum())
+        st.metric("Total Episodes", f"{total_episodes:,}")
+    
+    with col3:
+        total_size = analysis_df['total_size_gb'].sum()
+        st.metric("Total Storage", f"{total_size:.2f} GB")
+    
+    with col4:
+        st.metric("Avg Size/Episode", f"{stats.get('mean', 0):.2f} MB")
+    
+    with col5:
+        outlier_count = stats.get('outlier_count', 0)
+        outlier_pct = stats.get('outlier_percentage', 0)
+        st.metric(
+            "Outliers",
+            outlier_count,
+            f"{outlier_pct:.2f}%",
+            delta_color="inverse"
+        )
+    
+    # Visualizations tabs
+    tab1, tab2, tab3 = st.tabs(["📋 Table", "📊 Charts", "🚨 Outliers"])
+    
+    with tab1:
+        st.subheader("Series Analysis Table")
+        display_df = analysis_df[[
+            'title', 'episode_count', 'total_size_gb', 'avg_size_mb', 'z_score', 'is_outlier'
+        ]].copy()
         
-        st.markdown("---")
+        # Format to 2 decimal places
+        display_df['total_size_gb'] = display_df['total_size_gb'].round(2)
+        display_df['avg_size_mb'] = display_df['avg_size_mb'].round(2)
+        display_df['z_score'] = display_df['z_score'].round(2)
         
-        # Summary metrics
-        col1, col2, col3, col4, col5 = st.columns(5)
+        display_df.columns = [
+            'Series Title', 'Episodes', 'Total Size (GB)',
+            'Avg Size (MB)', 'Z-Score', 'Outlier'
+        ]
         
-        with col1:
-            st.metric("Total Series", len(analysis_df))
+        display_df = display_df.sort_values('Avg Size (MB)', ascending=False)
+        st.dataframe(display_df, use_container_width=True, height=400)
+    
+    with tab2:
+        # Bar chart
+        st.subheader("Top 20 Series by Average Size")
+        top_20 = analysis_df.nlargest(20, 'avg_size_mb')
+        colors = ['#e74c3c' if outlier else '#3498db' for outlier in top_20['is_outlier']]
         
-        with col2:
-            total_episodes = int(analysis_df['episode_count'].sum())
-            st.metric("Total Episodes", f"{total_episodes:,}")
+        fig = go.Figure(go.Bar(
+            y=top_20['title'],
+            x=top_20['avg_size_mb'],
+            orientation='h',
+            marker=dict(color=colors),
+            text=top_20['avg_size_mb'].round(2),
+            textposition='outside'
+        ))
         
-        with col3:
-            total_size = analysis_df['total_size_gb'].sum()
-            st.metric("Total Storage", f"{total_size:.1f} GB")
+        fig.update_layout(
+            xaxis_title="Average Size per Episode (MB)",
+            height=600,
+            yaxis={'categoryorder': 'total ascending'}
+        )
         
-        with col4:
-            st.metric("Avg Size/Episode", f"{stats.get('mean', 0):.0f} MB")
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with tab3:
+        st.subheader("Outlier Series")
+        outliers = analysis_df[analysis_df['is_outlier'] == True]
         
-        with col5:
-            outlier_count = stats.get('outlier_count', 0)
-            outlier_pct = stats.get('outlier_percentage', 0)
-            st.metric(
-                "Outliers",
-                outlier_count,
-                f"{outlier_pct:.1f}%",
-                delta_color="inverse"
-            )
-        
-        # Visualizations tabs
-        tab1, tab2, tab3 = st.tabs(["📋 Table", "📊 Charts", "🚨 Outliers"])
-        
-        with tab1:
-            st.subheader("Series Analysis Table")
-            display_df = analysis_df[[
-                'title', 'episode_count', 'total_size_gb', 'avg_size_mb', 'z_score', 'is_outlier'
-            ]].copy()
+        if len(outliers) > 0:
+            st.warning(f"Found {len(outliers)} series with unusually high file sizes")
             
-            display_df.columns = [
-                'Series Title', 'Episodes', 'Total Size (GB)',
-                'Avg Size (MB)', 'Z-Score', 'Outlier'
-            ]
-            
-            display_df = display_df.sort_values('Avg Size (MB)', ascending=False)
-            st.dataframe(display_df, use_container_width=True, height=400)
-        
-        with tab2:
-            # Bar chart
-            st.subheader("Top 20 Series by Average Size")
-            top_20 = analysis_df.nlargest(20, 'avg_size_mb')
-            colors = ['#e74c3c' if outlier else '#3498db' for outlier in top_20['is_outlier']]
-            
-            fig = go.Figure(go.Bar(
-                y=top_20['title'],
-                x=top_20['avg_size_mb'],
-                orientation='h',
-                marker=dict(color=colors),
-                text=top_20['avg_size_mb'].round(1),
-                textposition='outside'
-            ))
-            
-            fig.update_layout(
-                xaxis_title="Average Size per Episode (MB)",
-                height=600,
-                yaxis={'categoryorder': 'total ascending'}
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with tab3:
-            st.subheader("Outlier Series")
-            outliers = analysis_df[analysis_df['is_outlier'] == True]
-            
-            if len(outliers) > 0:
-                st.warning(f"Found {len(outliers)} series with unusually high file sizes")
-                
-                for idx, (i, row) in enumerate(outliers.head(10).iterrows(), 1):
-                    with st.expander(f"#{idx} - {row['title']} ({row['avg_size_mb']:.0f} MB/episode)"):
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.write(f"**Episodes:** {row['episode_count']}")
-                            st.write(f"**Total Size:** {row['total_size_gb']:.2f} GB")
-                        
-                        with col2:
-                            st.write(f"**Avg Size:** {row['avg_size_mb']:.1f} MB")
-                            st.write(f"**Z-Score:** {row['z_score']:.2f}")
-            else:
-                st.success("✅ No outliers detected!")
+            for idx, (i, row) in enumerate(outliers.head(10).iterrows(), 1):
+                with st.expander(f"#{idx} - {row['title']} ({row['avg_size_mb']:.2f} MB/episode)"):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write(f"**Episodes:** {row['episode_count']}")
+                        st.write(f"**Total Size:** {row['total_size_gb']:.2f} GB")
+                    
+                    with col2:
+                        st.write(f"**Avg Size:** {row['avg_size_mb']:.2f} MB")
+                        st.write(f"**Z-Score:** {row['z_score']:.2f}")
+        else:
+            st.success("✅ No outliers detected!")
 
 
 # ============================================================================
@@ -653,10 +858,11 @@ def show_history_page():
     """Display historical analysis and comparison page."""
     st.title("📈 Historical Analysis")
     
+    user_id = st.session_state.user['id']
     db = st.session_state.history_db
     
-    # Get available dates
-    available_dates = db.get_analysis_dates()
+    # Get available dates for this user
+    available_dates = db.get_analysis_dates(user_id)
     
     if not available_dates:
         st.info("📭 No historical data available yet. Run an analysis first!")
@@ -677,16 +883,19 @@ def show_history_page():
         st.subheader("All Historical Analyses")
         
         # Load global trends
-        trends_df = db.get_global_trends()
+        trends_df = db.get_global_trends(user_id)
         
         if trends_df is not None and len(trends_df) > 0:
-            st.dataframe(
-                trends_df[[
-                    'analysis_date', 'total_series', 'total_episodes',
-                    'total_storage_gb', 'mean_avg_size_mb', 'outlier_count'
-                ]],
-                use_container_width=True
-            )
+            # Format numeric columns to 2 decimal places
+            display_trends = trends_df[[
+                'analysis_date', 'total_series', 'total_episodes',
+                'total_storage_gb', 'mean_avg_size_mb', 'outlier_count'
+            ]].copy()
+            
+            display_trends['total_storage_gb'] = display_trends['total_storage_gb'].round(2)
+            display_trends['mean_avg_size_mb'] = display_trends['mean_avg_size_mb'].round(2)
+            
+            st.dataframe(display_trends, use_container_width=True)
             
             # Storage evolution chart
             st.subheader("Storage Evolution Over Time")
@@ -694,7 +903,7 @@ def show_history_page():
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=trends_df['analysis_date'],
-                y=trends_df['total_storage_gb'],
+                y=trends_df['total_storage_gb'].round(2),
                 mode='lines+markers',
                 name='Total Storage (GB)',
                 line=dict(color='#3498db', width=3)
@@ -714,7 +923,7 @@ def show_history_page():
             fig2 = go.Figure()
             fig2.add_trace(go.Scatter(
                 x=trends_df['analysis_date'],
-                y=trends_df['mean_avg_size_mb'],
+                y=trends_df['mean_avg_size_mb'].round(2),
                 mode='lines+markers',
                 name='Mean Avg Size (MB)',
                 line=dict(color='#2ecc71', width=3)
@@ -755,12 +964,12 @@ def show_history_page():
                 st.warning("Please select two different dates")
             else:
                 with st.spinner("Comparing analyses..."):
-                    comparison_df = db.compare_dates(date1, date2)
+                    comparison_df = db.compare_dates(user_id, date1, date2)
                     
                     if comparison_df is None or len(comparison_df) == 0:
                         st.error("Failed to compare dates")
                     else:
-                        # Summary metrics
+                        # Summary metrics with 2 decimal places
                         st.subheader("Comparison Summary")
                         
                         col1, col2, col3, col4 = st.columns(4)
@@ -778,8 +987,8 @@ def show_history_page():
                         with col3:
                             st.metric(
                                 "Storage Change",
-                                f"{abs(total_change):.1f} GB",
-                                delta=f"{total_change:+.1f} GB",
+                                f"{abs(total_change):.2f} GB",
+                                delta=f"{total_change:+.2f} GB",
                                 delta_color="inverse" if total_change < 0 else "normal"
                             )
                         
@@ -787,17 +996,20 @@ def show_history_page():
                             avg_change = comparison_df[comparison_df['status'] == 'existing']['avg_size_change_mb'].mean()
                             st.metric(
                                 "Avg Size Change",
-                                f"{abs(avg_change):.0f} MB",
-                                delta=f"{avg_change:+.0f} MB"
+                                f"{abs(avg_change):.2f} MB",
+                                delta=f"{avg_change:+.2f} MB"
                             )
                         
                         # Detailed comparison table
                         st.subheader("Detailed Comparison")
                         
-                        # Format display
+                        # Format display with 2 decimal places
                         display_comp = comparison_df.copy()
                         display_comp['episode_count_old'] = display_comp['episode_count_old'].fillna(0).astype(int)
                         display_comp['episode_count_new'] = display_comp['episode_count_new'].fillna(0).astype(int)
+                        display_comp['size_change_gb'] = display_comp['size_change_gb'].round(2)
+                        display_comp['size_change_pct'] = display_comp['size_change_pct'].round(2)
+                        display_comp['avg_size_change_mb'] = display_comp['avg_size_change_mb'].round(2)
                         
                         st.dataframe(
                             display_comp[[
@@ -811,7 +1023,7 @@ def show_history_page():
                         # Top changers chart
                         st.subheader("Top 10 Size Changes")
                         
-                        top_changes = comparison_df.nlargest(10, 'abs_size_change') if 'abs_size_change' in comparison_df else comparison_df.head(10)
+                        top_changes = comparison_df.nlargest(10, 'size_change_gb') if len(comparison_df) > 10 else comparison_df
                         
                         fig = go.Figure()
                         
@@ -819,7 +1031,7 @@ def show_history_page():
                         
                         fig.add_trace(go.Bar(
                             y=top_changes['series_title'],
-                            x=top_changes['size_change_gb'],
+                            x=top_changes['size_change_gb'].round(2),
                             orientation='h',
                             marker=dict(color=colors),
                             text=top_changes['size_change_gb'].round(2),
@@ -850,15 +1062,15 @@ def show_history_page():
         
         # Select a specific series to track
         # First, get a list of all series that appear in history
-        conn = db.db_path
         import sqlite3
-        conn_obj = sqlite3.connect(conn)
+        conn = sqlite3.connect(db.db_path)
         series_list = pd.read_sql_query("""
             SELECT DISTINCT series_id, series_title 
             FROM history 
+            WHERE user_id = ?
             ORDER BY series_title
-        """, conn_obj)
-        conn_obj.close()
+        """, conn, params=(user_id,))
+        conn.close()
         
         if len(series_list) > 0:
             selected_series = st.selectbox(
@@ -869,9 +1081,9 @@ def show_history_page():
             
             if st.button("📊 Show Trend"):
                 # Get time series for this series
-                ts_size = db.get_time_series(selected_series, 'total_size_gb')
-                ts_episodes = db.get_time_series(selected_series, 'episode_count')
-                ts_avg = db.get_time_series(selected_series, 'avg_size_mb')
+                ts_size = db.get_time_series(user_id, selected_series, 'total_size_gb')
+                ts_episodes = db.get_time_series(user_id, selected_series, 'episode_count')
+                ts_avg = db.get_time_series(user_id, selected_series, 'avg_size_mb')
                 
                 if ts_size is not None and len(ts_size) > 0:
                     series_name = ts_size['series_title'].iloc[0]
@@ -888,7 +1100,7 @@ def show_history_page():
                     )
                     
                     fig.add_trace(
-                        go.Scatter(x=ts_size['analysis_date'], y=ts_size['total_size_gb'],
+                        go.Scatter(x=ts_size['analysis_date'], y=ts_size['total_size_gb'].round(2),
                                  mode='lines+markers', name='Total Size'),
                         row=1, col=1
                     )
@@ -900,7 +1112,7 @@ def show_history_page():
                     )
                     
                     fig.add_trace(
-                        go.Scatter(x=ts_avg['analysis_date'], y=ts_avg['avg_size_mb'],
+                        go.Scatter(x=ts_avg['analysis_date'], y=ts_avg['avg_size_mb'].round(2),
                                  mode='lines+markers', name='Avg Size'),
                         row=3, col=1
                     )
@@ -917,6 +1129,11 @@ def show_history_page():
     with tab4:
         st.subheader("Manage Historical Data")
         
+        # Only admins can delete data
+        if not is_admin():
+            st.info("ℹ️ Only administrators can manage historical data")
+            return
+        
         col1, col2 = st.columns(2)
         
         with col1:
@@ -930,7 +1147,7 @@ def show_history_page():
             
             if st.button("🗑️ Delete Analysis", type="secondary"):
                 if st.session_state.get('confirm_delete', False):
-                    success, msg = db.delete_analysis(date_to_delete)
+                    success, msg = db.delete_analysis(user_id, date_to_delete)
                     if success:
                         st.success(msg)
                         st.rerun()
@@ -952,7 +1169,7 @@ def show_history_page():
             )
             
             if st.button("🧹 Cleanup Old Data"):
-                success, msg = db.cleanup_old_data(days_to_keep)
+                success, msg = db.cleanup_old_data(user_id, days_to_keep)
                 if success:
                     st.success(msg)
                     st.rerun()
@@ -966,7 +1183,7 @@ def show_history_page():
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_path = f"sonarr_history_export_{timestamp}.csv"
             
-            success, msg = db.export_to_csv(output_path)
+            success, msg = db.export_to_csv(user_id, output_path)
             
             if success:
                 st.success(msg)
@@ -989,16 +1206,42 @@ def show_history_page():
 def main():
     """Main application entry point."""
     
+    user_mgr = st.session_state.user_manager
+    
+    # Check if first run (no users exist)
+    if not user_mgr.has_admin():
+        show_first_run_page()
+        return
+    
+    # Check if user is logged in
+    if not is_logged_in():
+        show_login_page()
+        return
+    
+    # User is logged in - show main app
+    user = st.session_state.user
+    
     # Sidebar navigation
     with st.sidebar:
         st.title("📊 Sonarr Analyzer")
-        st.markdown("Extended Edition")
+        st.markdown("### v0.3")
         
         st.markdown("---")
         
+        st.markdown(f"**User:** {user['username']}")
+        st.markdown(f"**Role:** {user['role'].upper()}")
+        
+        st.markdown("---")
+        
+        # Navigation
+        pages = ["🔍 Analysis", "📈 Historical Data", "🔑 Configuration"]
+        
+        if is_admin():
+            pages.append("👥 User Management")
+        
         page = st.radio(
             "Navigation",
-            options=["🔍 Current Analysis", "📈 Historical Data", "⚙️ Configuration"],
+            options=pages,
             label_visibility="collapsed"
         )
         
@@ -1009,26 +1252,33 @@ def main():
             st.markdown("### Last Analysis")
             df = st.session_state['analysis_df']
             st.metric("Series", len(df))
-            st.metric("Storage", f"{df['total_size_gb'].sum():.0f} GB")
+            st.metric("Storage", f"{df['total_size_gb'].sum():.2f} GB")
         
         # Database info
         db = st.session_state.history_db
-        dates = db.get_analysis_dates()
+        dates = db.get_analysis_dates(user['id'])
         if dates:
             st.markdown("---")
             st.markdown("### Historical Data")
             st.metric("Analyses Saved", len(dates))
             st.caption(f"Latest: {dates[0][:10]}")
+        
+        st.markdown("---")
+        
+        # Logout button
+        if st.button("🚪 Logout", type="secondary"):
+            logout()
     
     # Route to appropriate page
-    if "Current Analysis" in page:
+    if "Analysis" in page:
         show_analysis_page()
     elif "Historical" in page:
         show_history_page()
     elif "Configuration" in page:
-        show_configuration_page()
+        show_token_config_page()
+    elif "User Management" in page:
+        show_user_management_page()
 
 
 if __name__ == "__main__":
     main()
-

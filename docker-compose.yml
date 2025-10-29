@@ -2,15 +2,15 @@ version: '3.8'
 
 services:
   sonarr-analyzer:
-    # Para usar la imagen de Docker Hub (una vez publicada)
+    # Use Docker Hub image (recommended)
     image: martitoci/sonarr-analyzer:latest
     
-    # O para construir localmente:
+    # Or build locally:
     # build:
     #   context: .
     #   dockerfile: Dockerfile
     
-    container_name: sonarr-size-analyzer
+    container_name: sonarr-analyzer
     
     ports:
       - "8501:8501"
@@ -22,11 +22,14 @@ services:
       - STREAMLIT_SERVER_HEADLESS=true
       - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
       
-      # Optional: Pre-configure Sonarr connection (NOT RECOMMENDED for security)
-      # - SONARR_URL=http://sonarr:8989
-      # - SONARR_API_KEY=your_api_key_here
+      # Note: Sonarr tokens are now stored per-user in encrypted database
+      # Configure via the web interface after first login
     
-    # Persistent data volume for history and encrypted credentials
+    # Persistent data volume for:
+    # - User database (users.db)
+    # - Encrypted tokens (tokens.db)
+    # - Master encryption key (.master.key)
+    # - Historical analysis data (sonarr_history.db)
     volumes:
       - sonarr-data:/app/data
       # Or use local directory:

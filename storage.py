@@ -33,6 +33,7 @@ class HistoryDatabase:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
                 analysis_date TEXT NOT NULL,
                 series_id INTEGER NOT NULL,
                 series_title TEXT NOT NULL,
@@ -43,7 +44,7 @@ class HistoryDatabase:
                 avg_size_mb REAL,
                 z_score REAL,
                 is_outlier INTEGER,
-                UNIQUE(analysis_date, series_id)
+                UNIQUE(user_id, analysis_date, series_id)
             )
         """)
         
@@ -51,14 +52,16 @@ class HistoryDatabase:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS analysis_summary (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                analysis_date TEXT UNIQUE NOT NULL,
+                user_id INTEGER NOT NULL,
+                analysis_date TEXT NOT NULL,
                 total_series INTEGER,
                 total_episodes INTEGER,
                 total_storage_gb REAL,
                 mean_avg_size_mb REAL,
                 std_avg_size_mb REAL,
                 outlier_count INTEGER,
-                outlier_percentage REAL
+                outlier_percentage REAL,
+                UNIQUE(user_id, analysis_date)
             )
         """)
         
@@ -78,15 +81,17 @@ class HistoryDatabase:
     
     def save_analysis(
         self,
+        user_id: int,
         df: pd.DataFrame,
         stats: Dict,
         analysis_date: Optional[str] = None,
         overwrite: bool = False
     ) -> Tuple[bool, str]:
         """
-        Save analysis results to database.
+        Save analysis results to database for a specific user.
         
         Args:
+            user_id: User ID who owns this analysis
             df: DataFrame with series analysis results
             stats: Dictionary with global statistics
             analysis_date: Date string (ISO format), defaults to now
@@ -104,8 +109,8 @@ class HistoryDatabase:
             cursor = conn.cursor()
             
             cursor.execute(
-                "SELECT COUNT(*) FROM history WHERE analysis_date = ?",
-                (analysis_date,)
+                "SELECT COUNT(*) FROM history WHERE user_id = ? AND analysis_date = ?",
+                (user_id, analysis_date)
             )
             exists = cursor.fetchone()[0] > 0
             
@@ -116,18 +121,19 @@ class HistoryDatabase:
             # Delete existing data if overwriting
             if exists and overwrite:
                 cursor.execute(
-                    "DELETE FROM history WHERE analysis_date = ?",
-                    (analysis_date,)
+                    "DELETE FROM history WHERE user_id = ? AND analysis_date = ?",
+                    (user_id, analysis_date)
                 )
                 cursor.execute(
-                    "DELETE FROM analysis_summary WHERE analysis_date = ?",
-                    (analysis_date,)
+                    "DELETE FROM analysis_summary WHERE user_id = ? AND analysis_date = ?",
+                    (user_id, analysis_date)
                 )
             
             # Insert series data
             series_data = []
             for _, row in df.iterrows():
                 series_data.append((
+                    user_id,
                     analysis_date,
                     int(row['series_id']),
                     row['title'],
@@ -142,18 +148,19 @@ class HistoryDatabase:
             
             cursor.executemany("""
                 INSERT INTO history (
-                    analysis_date, series_id, series_title, year, status,
+                    user_id, analysis_date, series_id, series_title, year, status,
                     episode_count, total_size_gb, avg_size_mb, z_score, is_outlier
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, series_data)
             
             # Insert summary data
             cursor.execute("""
                 INSERT INTO analysis_summary (
-                    analysis_date, total_series, total_episodes, total_storage_gb,
+                    user_id, analysis_date, total_series, total_episodes, total_storage_gb,
                     mean_avg_size_mb, std_avg_size_mb, outlier_count, outlier_percentage
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
+                user_id,
                 analysis_date,
                 len(df),
                 int(df['episode_count'].sum()),
@@ -172,9 +179,12 @@ class HistoryDatabase:
         except Exception as e:
             return False, f"Error saving analysis: {str(e)}"
     
-    def get_analysis_dates(self) -> List[str]:
+    def get_analysis_dates(self, user_id: int) -> List[str]:
         """
-        Get list of all available analysis dates.
+        Get list of all available analysis dates for a specific user.
+        
+        Args:
+            user_id: User ID
         
         Returns:
             List of date strings
@@ -186,8 +196,9 @@ class HistoryDatabase:
             cursor.execute("""
                 SELECT DISTINCT analysis_date 
                 FROM history 
+                WHERE user_id = ?
                 ORDER BY analysis_date DESC
-            """)
+            """, (user_id,))
             
             dates = [row[0] for row in cursor.fetchall()]
             conn.close()
@@ -198,11 +209,12 @@ class HistoryDatabase:
             print(f"Error getting dates: {e}")
             return []
     
-    def load_analysis(self, analysis_date: str) -> Optional[pd.DataFrame]:
+    def load_analysis(self, user_id: int, analysis_date: str) -> Optional[pd.DataFrame]:
         """
-        Load analysis data for a specific date.
+        Load analysis data for a specific user and date.
         
         Args:
+            user_id: User ID
             analysis_date: Date string to load
             
         Returns:
@@ -213,9 +225,9 @@ class HistoryDatabase:
             
             df = pd.read_sql_query("""
                 SELECT * FROM history 
-                WHERE analysis_date = ?
+                WHERE user_id = ? AND analysis_date = ?
                 ORDER BY avg_size_mb DESC
-            """, conn, params=(analysis_date,))
+            """, conn, params=(user_id, analysis_date))
             
             conn.close()
             
@@ -231,11 +243,12 @@ class HistoryDatabase:
             print(f"Error loading analysis: {e}")
             return None
     
-    def get_summary(self, analysis_date: str) -> Optional[Dict]:
+    def get_summary(self, user_id: int, analysis_date: str) -> Optional[Dict]:
         """
-        Get summary statistics for a specific analysis date.
+        Get summary statistics for a specific user and analysis date.
         
         Args:
+            user_id: User ID
             analysis_date: Date string
             
         Returns:
@@ -247,8 +260,8 @@ class HistoryDatabase:
             
             cursor.execute("""
                 SELECT * FROM analysis_summary 
-                WHERE analysis_date = ?
-            """, (analysis_date,))
+                WHERE user_id = ? AND analysis_date = ?
+            """, (user_id, analysis_date))
             
             row = cursor.fetchone()
             conn.close()
@@ -257,14 +270,15 @@ class HistoryDatabase:
                 return None
             
             return {
-                'analysis_date': row[1],
-                'total_series': row[2],
-                'total_episodes': row[3],
-                'total_storage_gb': row[4],
-                'mean_avg_size_mb': row[5],
-                'std_avg_size_mb': row[6],
-                'outlier_count': row[7],
-                'outlier_percentage': row[8]
+                'user_id': row[1],
+                'analysis_date': row[2],
+                'total_series': row[3],
+                'total_episodes': row[4],
+                'total_storage_gb': row[5],
+                'mean_avg_size_mb': row[6],
+                'std_avg_size_mb': row[7],
+                'outlier_count': row[8],
+                'outlier_percentage': row[9]
             }
             
         except Exception as e:
@@ -273,13 +287,15 @@ class HistoryDatabase:
     
     def compare_dates(
         self,
+        user_id: int,
         date1: str,
         date2: str
     ) -> Optional[pd.DataFrame]:
         """
-        Compare analysis results between two dates.
+        Compare analysis results between two dates for a specific user.
         
         Args:
+            user_id: User ID
             date1: First date (older)
             date2: Second date (newer)
             
@@ -294,15 +310,15 @@ class HistoryDatabase:
                 SELECT series_id, series_title, episode_count, 
                        total_size_gb, avg_size_mb, is_outlier
                 FROM history 
-                WHERE analysis_date = ?
-            """, conn, params=(date1,))
+                WHERE user_id = ? AND analysis_date = ?
+            """, conn, params=(user_id, date1))
             
             df2 = pd.read_sql_query("""
                 SELECT series_id, series_title, episode_count, 
                        total_size_gb, avg_size_mb, is_outlier
                 FROM history 
-                WHERE analysis_date = ?
-            """, conn, params=(date2,))
+                WHERE user_id = ? AND analysis_date = ?
+            """, conn, params=(user_id, date2))
             
             conn.close()
             
@@ -370,13 +386,15 @@ class HistoryDatabase:
     
     def get_time_series(
         self,
+        user_id: int,
         series_id: Optional[int] = None,
         metric: str = 'total_size_gb'
     ) -> Optional[pd.DataFrame]:
         """
-        Get time series data for a specific metric.
+        Get time series data for a specific metric and user.
         
         Args:
+            user_id: User ID
             series_id: Optional series ID to filter by
             metric: Metric to retrieve (total_size_gb, avg_size_mb, episode_count)
             
@@ -390,18 +408,19 @@ class HistoryDatabase:
                 query = f"""
                     SELECT analysis_date, series_title, {metric}
                     FROM history 
-                    WHERE series_id = ?
+                    WHERE user_id = ? AND series_id = ?
                     ORDER BY analysis_date
                 """
-                df = pd.read_sql_query(query, conn, params=(series_id,))
+                df = pd.read_sql_query(query, conn, params=(user_id, series_id))
             else:
                 query = f"""
                     SELECT analysis_date, SUM({metric}) as {metric}
                     FROM history 
+                    WHERE user_id = ?
                     GROUP BY analysis_date
                     ORDER BY analysis_date
                 """
-                df = pd.read_sql_query(query, conn)
+                df = pd.read_sql_query(query, conn, params=(user_id,))
             
             conn.close()
             
@@ -411,9 +430,12 @@ class HistoryDatabase:
             print(f"Error getting time series: {e}")
             return None
     
-    def get_global_trends(self) -> Optional[pd.DataFrame]:
+    def get_global_trends(self, user_id: int) -> Optional[pd.DataFrame]:
         """
-        Get global trend data from all analyses.
+        Get global trend data from all analyses for a specific user.
+        
+        Args:
+            user_id: User ID
         
         Returns:
             DataFrame with trend data
@@ -423,8 +445,9 @@ class HistoryDatabase:
             
             df = pd.read_sql_query("""
                 SELECT * FROM analysis_summary 
+                WHERE user_id = ?
                 ORDER BY analysis_date
-            """, conn)
+            """, conn, params=(user_id,))
             
             conn.close()
             
@@ -434,11 +457,12 @@ class HistoryDatabase:
             print(f"Error getting trends: {e}")
             return None
     
-    def delete_analysis(self, analysis_date: str) -> Tuple[bool, str]:
+    def delete_analysis(self, user_id: int, analysis_date: str) -> Tuple[bool, str]:
         """
-        Delete analysis data for a specific date.
+        Delete analysis data for a specific user and date.
         
         Args:
+            user_id: User ID
             analysis_date: Date to delete
             
         Returns:
@@ -449,13 +473,13 @@ class HistoryDatabase:
             cursor = conn.cursor()
             
             cursor.execute(
-                "DELETE FROM history WHERE analysis_date = ?",
-                (analysis_date,)
+                "DELETE FROM history WHERE user_id = ? AND analysis_date = ?",
+                (user_id, analysis_date)
             )
             
             cursor.execute(
-                "DELETE FROM analysis_summary WHERE analysis_date = ?",
-                (analysis_date,)
+                "DELETE FROM analysis_summary WHERE user_id = ? AND analysis_date = ?",
+                (user_id, analysis_date)
             )
             
             deleted_rows = cursor.rowcount
@@ -470,11 +494,12 @@ class HistoryDatabase:
         except Exception as e:
             return False, f"Error deleting analysis: {str(e)}"
     
-    def cleanup_old_data(self, days_to_keep: int = 90) -> Tuple[bool, str]:
+    def cleanup_old_data(self, user_id: int, days_to_keep: int = 90) -> Tuple[bool, str]:
         """
-        Delete analysis data older than specified days.
+        Delete analysis data older than specified days for a specific user.
         
         Args:
+            user_id: User ID
             days_to_keep: Number of days to keep
             
         Returns:
@@ -487,13 +512,13 @@ class HistoryDatabase:
             cursor = conn.cursor()
             
             cursor.execute(
-                "DELETE FROM history WHERE analysis_date < ?",
-                (cutoff_date,)
+                "DELETE FROM history WHERE user_id = ? AND analysis_date < ?",
+                (user_id, cutoff_date)
             )
             
             cursor.execute(
-                "DELETE FROM analysis_summary WHERE analysis_date < ?",
-                (cutoff_date,)
+                "DELETE FROM analysis_summary WHERE user_id = ? AND analysis_date < ?",
+                (user_id, cutoff_date)
             )
             
             deleted_rows = cursor.rowcount
@@ -505,11 +530,12 @@ class HistoryDatabase:
         except Exception as e:
             return False, f"Error cleaning up data: {str(e)}"
     
-    def export_to_csv(self, output_path: str) -> Tuple[bool, str]:
+    def export_to_csv(self, user_id: int, output_path: str) -> Tuple[bool, str]:
         """
-        Export entire history database to CSV.
+        Export user's history database to CSV.
         
         Args:
+            user_id: User ID
             output_path: Path for output CSV file
             
         Returns:
@@ -518,7 +544,11 @@ class HistoryDatabase:
         try:
             conn = sqlite3.connect(self.db_path)
             
-            df = pd.read_sql_query("SELECT * FROM history ORDER BY analysis_date, series_title", conn)
+            df = pd.read_sql_query("""
+                SELECT * FROM history 
+                WHERE user_id = ?
+                ORDER BY analysis_date, series_title
+            """, conn, params=(user_id,))
             
             conn.close()
             
@@ -557,18 +587,19 @@ if __name__ == "__main__":
     }
     
     # Test save
-    success, msg = db.save_analysis(sample_df, sample_stats)
+    test_user_id = 1
+    success, msg = db.save_analysis(test_user_id, sample_df, sample_stats)
     print(f"Save: {success} - {msg}")
     
     # Test load
-    dates = db.get_analysis_dates()
+    dates = db.get_analysis_dates(test_user_id)
     print(f"Available dates: {dates}")
     
     if dates:
-        loaded_df = db.load_analysis(dates[0])
+        loaded_df = db.load_analysis(test_user_id, dates[0])
         print(f"Loaded {len(loaded_df)} series")
         
-        summary = db.get_summary(dates[0])
+        summary = db.get_summary(test_user_id, dates[0])
         print(f"Summary: {summary}")
     
     print("\nTest complete!")

@@ -1,11 +1,11 @@
-# 📊 Sonarr Series Size Analyzer - Extended Edition
+# 📊 Sonarr Analyzer v0.3
 
 [![Docker Hub](https://img.shields.io/docker/pulls/martitoci/sonarr-analyzer.svg)](https://hub.docker.com/r/martitoci/sonarr-analyzer)
 [![Docker Image Size](https://img.shields.io/docker/image-size/martitoci/sonarr-analyzer/latest)](https://hub.docker.com/r/martitoci/sonarr-analyzer)
 [![Python Version](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](https://opensource.org/licenses/MIT)
 
-A professional web application built with Streamlit for analyzing average file size per episode across TV series managed by Sonarr. **Now with historical tracking, encrypted credential storage, and temporal comparison!**
+A web application built with Streamlit for analyzing average file size per episode across TV series managed by Sonarr. **Version 0.3 introduces user authentication, role-based access control, and secure per-user encrypted token storage!**
 
 ---
 
@@ -57,31 +57,43 @@ docker-compose up -d
 
 ---
 
-## ✨ Features
+## ✨ What's New in v0.3
 
-### 🔒 **Secure Credential Management**
-- **AES-256 Encryption** for storing Sonarr credentials
-- **Master Passphrase** protection
-- No plain-text API keys stored
-- Easy credential loading/deletion
+### 🔐 User Authentication System
+- **Secure login/logout** functionality
+- **Bcrypt password hashing** (12 rounds)
+- **First-run admin creation** flow
+- **Session management** with persistent login
 
-### 📈 **Historical Analysis**
-- **SQLite Database** for tracking analysis history
-- **Unlimited historical records** (with optional cleanup)
-- Track changes over time for each series
-- Compare any two analysis dates
+### 👥 Role-Based Access Control
+- **Admin Role:**
+  - Full access to all features
+  - Can create/manage users
+  - Can configure Sonarr connections
+  - Can run analyses and view history
+  
+- **Read-Only Role:**
+  - Can view analysis results
+  - Can view historical data
+  - Cannot modify settings
+  - Cannot run new analyses
 
-### 🔄 **Temporal Comparison**
-- **Side-by-side comparison** of two dates
-- **Detect new/removed series** automatically
-- **Storage change tracking** (GB and %)
-- **Trend visualization** for individual series
+### 🔑 Secure Token Management
+- **Per-user encrypted storage** using Fernet (AES-128)
+- **Master encryption key** generated on first startup
+- **Automatic token decryption** on login
+- **Separate configurations** per user
 
-### 📊 **Advanced Visualizations**
-- **Storage evolution** over time
-- **Average size trends** globally and per-series
-- **Episode count tracking**
-- **Top changers** between dates
+### 📊 Enhanced Visualizations
+- **Two decimal place formatting** for all file sizes
+- **Improved metric displays** with consistent formatting
+- **Better comparison charts** with precise values
+
+### 🧪 Comprehensive Testing
+- **60+ unit tests** covering all functionality
+- **Integration tests** for complete workflows
+- **Role enforcement tests**
+- **Security validation tests**
 
 ---
 
@@ -91,101 +103,221 @@ docker-compose up -d
 
 1. **Start the container** (see Quick Start above)
 2. **Open your browser:** http://localhost:8501
-3. **Go to ⚙️ Configuration** (sidebar)
-4. **Enter your Sonarr credentials:**
-   - Sonarr URL (e.g., `http://192.168.1.10:8989`)
-   - API Key (from Sonarr → Settings → General → Security)
-5. **(Optional) Save credentials encrypted:**
-   - Check "I want to save these credentials encrypted"
-   - Create a strong passphrase (min 8 characters)
-   - Confirm passphrase
-   - Click "Save Encrypted Credentials"
+3. **Create Admin Account:**
+   - On first launch, you'll see the "Create Admin Account" screen
+   - Enter username (min 3 characters)
+   - Enter password (min 8 characters)
+   - Confirm password
+   - Click "Create Admin Account"
 
-### Running Your First Analysis
+4. **Login:**
+   - Enter your admin credentials
+   - Click "Login"
 
-1. **Go to 🔍 Current Analysis** (sidebar)
-2. Configure advanced options if needed:
+5. **Configure Sonarr:**
+   - Go to "🔑 Configuration" in sidebar
+   - Enter Sonarr URL (e.g., `http://192.168.1.10:8989`)
+   - Enter API Key (from Sonarr → Settings → General → Security)
+   - Choose to save encrypted or use without saving
+   - Click "Save Configuration"
+
+---
+
+## 🔐 Authentication Flow
+
+### First Run (No Admin Exists)
+```
+Start App → Create Admin Screen → Create Admin → Login Screen → Dashboard
+```
+
+### Subsequent Runs (Admin Exists)
+```
+Start App → Login Screen → Enter Credentials → Dashboard
+```
+
+### User Roles
+
+| Feature | Admin | Read-Only |
+|---------|-------|-----------|
+| Login | ✅ | ✅ |
+| Configure Sonarr Token | ✅ | ✅ |
+| Run Analysis | ✅ | ❌ |
+| View Current Results | ✅ | ✅ |
+| View Historical Data | ✅ | ✅ |
+| Create Users | ✅ | ❌ |
+| Manage Users | ✅ | ❌ |
+| Delete Analysis Data | ✅ | ❌ |
+
+---
+
+## 👥 User Management (Admin Only)
+
+### Create New Users
+
+1. Login as admin
+2. Go to "👥 User Management" in sidebar
+3. Enter username, password, and role
+4. Click "Create User"
+
+### Manage Existing Users
+
+1. View all users in the management page
+2. See user details (created date, last login)
+3. Delete users (except yourself and last admin)
+
+---
+
+## 🔑 Token Security
+
+### How It Works
+
+1. **Master Key Generation:**
+   - On first startup, a master encryption key is generated
+   - Stored in `/app/data/.master.key`
+   - Used to encrypt all user tokens
+
+2. **Token Storage:**
+   - Each user's Sonarr URL + API key is encrypted
+   - Stored in SQLite database (`/app/data/tokens.db`)
+   - Encrypted with Fernet (AES-128 in CBC mode)
+
+3. **Token Usage:**
+   - On login, user's token is automatically decrypted
+   - Used for API calls during session
+   - Never stored in plain text
+
+### Security Best Practices
+
+✅ **DO:**
+- Use strong passwords (8+ characters, mix of letters/numbers/symbols)
+- Keep your data volume backed up
+- Use HTTPS if exposing to internet
+- Regularly update the Docker image
+
+❌ **DON'T:**
+- Share your master encryption key
+- Use simple passwords
+- Expose port 8501 directly to internet without reverse proxy
+- Delete the data volume unless backing up first
+
+---
+
+## 📊 Running Your First Analysis
+
+1. **Login** with your credentials
+2. **Configure Sonarr** (if not done already)
+3. **Go to "🔍 Analysis"** in sidebar
+4. **Configure options** (optional):
    - Request timeout
    - Z-Score threshold
    - Absolute threshold
-   - ✅ **Enable "Save this analysis to history"**
-3. Click **🚀 Run Analysis**
-4. Wait for results (progress bar shows status)
-5. Explore results in tabs:
-   - **📋 Table:** All series with metrics
-   - **📊 Charts:** Visual representations
-   - **🚨 Outliers:** Problematic series
+   - Enable "Save to history"
+5. **Click "🚀 Run Analysis"**
+6. **Wait for progress** (shows processing status)
+7. **Explore results:**
+   - **Table:** All series with detailed metrics
+   - **Charts:** Visual representations
+   - **Outliers:** Series with unusually large files
 
-### Using Historical Data
+---
 
-#### View All Analyses
+## 📈 Using Historical Data
 
-1. **Go to 📈 Historical Data** (sidebar)
-2. **Tab: 📅 All Analyses**
+### View All Analyses
+
+1. Go to "📈 Historical Data" in sidebar
+2. Tab: "📅 All Analyses"
 3. See:
    - Table of all past analyses
    - Storage evolution chart
    - Average size trends chart
 
-#### Compare Two Dates
+### Compare Two Dates
 
-1. **Tab: 🔄 Compare Dates**
-2. **Select two dates** to compare
-3. Click **🔄 Compare**
+1. Tab: "🔄 Compare Dates"
+2. Select two dates to compare
+3. Click "🔄 Compare"
 4. Review:
-   - **Summary metrics:** New/removed series, storage change
-   - **Detailed table:** Per-series comparison
-   - **Top changers chart:** Biggest changes
-5. **Download comparison CSV** for external analysis
+   - Summary metrics (new/removed series, storage change)
+   - Detailed comparison table
+   - Top changers chart
+5. Download comparison CSV
+
+### Track Series Trends
+
+1. Tab: "📈 Trends"
+2. Select a series to track
+3. Click "📊 Show Trend"
+4. View time series charts:
+   - Total size evolution
+   - Episode count changes
+   - Average size per episode
 
 ---
 
-## 🔐 Security Features
+## 🧪 Running Tests
 
-### Credential Encryption
+The application includes comprehensive tests to ensure reliability and security.
 
-The application uses **Fernet (AES-128)** with **PBKDF2 key derivation**:
+### Using pytest (Recommended)
 
-- **Salt:** Random 16-byte salt (stored in `.sonarr_salt`)
-- **Iterations:** 100,000 PBKDF2 rounds
-- **Key derivation:** SHA-256
-- **Encryption:** AES-128-CBC via Fernet
+```bash
+# Install test dependencies
+pip install -r requirements.txt
 
-**Files created in volume:**
-- `data/.sonarr_credentials.enc` (encrypted credentials)
-- `data/.sonarr_salt` (salt for key derivation)
-- `data/sonarr_history.db` (SQLite database - not encrypted)
+# Run all tests
+pytest -v
 
-**Best practices:**
-1. Use a **strong passphrase** (12+ characters, mixed case, numbers, symbols)
-2. **Never share** your passphrase
-3. Backup your data volume regularly
-4. **Passphrase cannot be recovered** if lost
+# Run specific test file
+pytest tests/test_auth.py -v
+
+# Run with coverage
+pytest --cov=. --cov-report=html tests/
+```
+
+### Using unittest
+
+```bash
+# Run all tests
+python -m unittest discover -v
+
+# Run specific test
+python -m unittest tests.test_auth.TestUserManager -v
+```
+
+### Test Coverage
+
+- ✅ **Authentication:** User creation, login, password hashing
+- ✅ **Security:** Token encryption, decryption, key management
+- ✅ **Storage:** Database operations, user isolation, comparisons
+- ✅ **Integration:** Complete workflows, role enforcement
+- ✅ **Validation:** Password complexity, unique constraints
+
+**Total: 60+ tests with comprehensive coverage**
 
 ---
 
 ## 💾 Data Persistence
 
-### Using Named Volume (Recommended)
+### Files Stored in `/app/data`
+
+| File | Purpose | Encrypted |
+|------|---------|-----------|
+| `users.db` | User accounts and hashed passwords | Passwords hashed |
+| `tokens.db` | User Sonarr tokens | ✅ Fully encrypted |
+| `.master.key` | Master encryption key | N/A (keep secure!) |
+| `sonarr_history.db` | Historical analysis data | No |
+
+### Backup Data Volume
 
 ```bash
-docker run -d \
-  --name sonarr-analyzer \
-  -p 8501:8501 \
-  -v sonarr-data:/app/data \
-  martitoci/sonarr-analyzer:latest
-```
-
-**Backup volume:**
-```bash
+# Backup
 docker run --rm \
   -v sonarr-data:/data \
   -v $(pwd):/backup \
   alpine tar czf /backup/sonarr-data-backup.tar.gz -C /data .
-```
 
-**Restore volume:**
-```bash
+# Restore
 docker run --rm \
   -v sonarr-data:/data \
   -v $(pwd):/backup \
@@ -206,21 +338,25 @@ docker run -d \
   martitoci/sonarr-analyzer:latest
 ```
 
-**Files will be in:** `./sonarr-data/`
-
 ---
 
 ## 📊 Understanding the Results
 
-### Z-Score Explained
+### Metrics Explained
+
+- **Episodes:** Number of downloaded episode files
+- **Total Size (GB):** Combined size of all episodes (2 decimal places)
+- **Avg Size (MB):** Average file size per episode (2 decimal places)
+- **Z-Score:** Statistical deviation from mean (2 decimal places)
+- **Outlier:** Yes if Z-Score > threshold (default: 2.0)
+
+### Z-Score Interpretation
 
 The **Z-Score** measures how many standard deviations a value is from the mean:
 
 ```
 Z-Score = (Value - Mean) / Std Deviation
 ```
-
-**Interpretation:**
 
 | Z-Score | Meaning | Action |
 |---------|---------|--------|
@@ -229,28 +365,18 @@ Z-Score = (Value - Mean) / Std Deviation
 | **> 2** | **Outlier 🚨** | **Review and re-encode** |
 | > 3 | Extreme 🔥 | **High priority** |
 
-**Real example:**
-- Mean: 675 MB per episode
-- Std Dev: 567 MB
-- Series with 2000 MB: Z-Score = 2.34 → **Outlier!**
+**Example:**
+- Mean: 675.50 MB per episode
+- Std Dev: 567.25 MB
+- Series with 2000.75 MB: Z-Score = 2.34 → **Outlier!**
 
 This series uses ~3x more space than average.
-
-### Metrics Glossary
-
-- **Episodes:** Number of downloaded episode files
-- **Total Size (GB):** Combined size of all episodes
-- **Avg Size (MB):** Average file size per episode
-- **Z-Score:** Statistical deviation (see above)
-- **Outlier:** Yes if Z-Score > threshold (default: 2.0)
 
 ---
 
 ## 🔧 Configuration
 
 ### Environment Variables
-
-You can configure the application using environment variables:
 
 ```bash
 docker run -d \
@@ -289,7 +415,7 @@ Access at: http://localhost:9000
 
 - **Base Image:** python:3.11-slim
 - **Architecture:** linux/amd64, linux/arm64
-- **Size:** ~250 MB
+- **Size:** ~280 MB (includes new dependencies)
 - **User:** Non-root (UID 1000)
 - **Health Check:** Built-in
 
@@ -300,19 +426,20 @@ Access at: http://localhost:9000
 ### Volumes
 
 - **/app/data:** Persistent storage for:
-  - Historical analysis database
-  - Encrypted credentials (optional)
-  - Configuration files
+  - User database
+  - Encrypted tokens
+  - Master encryption key
+  - Historical analysis data
 
 ### Tags
 
-- `latest` - Latest stable release
-- `v2.0.0` - Specific version
-- `v2` - Major version
+- `latest` - Latest stable release (v0.3)
+- `v0.3.0` - Specific version
+- `v0.3` - Major version
 
 ```bash
 # Use specific version
-docker pull martitoci/sonarr-analyzer:v2.0.0
+docker pull martitoci/sonarr-analyzer:v0.3.0
 
 # Use latest
 docker pull martitoci/sonarr-analyzer:latest
@@ -322,47 +449,45 @@ docker pull martitoci/sonarr-analyzer:latest
 
 ## 🔍 Troubleshooting
 
-### Cannot connect to Sonarr
+### Cannot Login
 
-**Problem:** App shows "Connection failed"
+**Problem:** "Invalid username or password"
+
+**Solutions:**
+1. Verify credentials (case-sensitive)
+2. If forgotten, no password recovery yet - need to recreate user database
+3. Check logs: `docker logs sonarr-analyzer`
+
+### Cannot Connect to Sonarr
+
+**Problem:** "Connection failed" or timeout
 
 **Solutions:**
 1. **Check Sonarr is running**
 2. **Verify URL format:**
    - ✅ Good: `http://192.168.1.10:8989`
    - ❌ Bad: `192.168.1.10:8989` (missing http://)
-   - ❌ Bad: `localhost:8989` (from inside container)
-3. **Use host IP or container name** if in same network
+   - ❌ Bad: `localhost:8989` (use host IP from container)
+3. **Use host IP or container name** if in same Docker network
 4. **Check firewall rules**
+5. **Test API key** in Sonarr settings
 
-### Invalid passphrase
+### Database Errors
 
-**Problem:** Cannot load saved credentials
+**Problem:** "Database is locked" or corruption
 
 **Solutions:**
-1. **Try passphrase again** (case-sensitive)
-2. **Delete and recreate:**
+1. **Restart container:**
    ```bash
-   docker exec sonarr-analyzer rm /app/data/.sonarr_credentials.enc /app/data/.sonarr_salt
+   docker restart sonarr-analyzer
    ```
-3. **Reconfigure** in ⚙️ Configuration page
-
-### No historical data
-
-**Problem:** Historical Data page is empty
-
-**Solutions:**
-1. **Run an analysis first** with "Save to history" enabled
-2. **Check database exists:**
+2. **Check permissions:**
    ```bash
    docker exec sonarr-analyzer ls -la /app/data/
    ```
-3. **Verify volume is mounted:**
-   ```bash
-   docker inspect sonarr-analyzer | grep Mounts -A 20
-   ```
+3. **Restore from backup** if corruption persists
 
-### High memory usage
+### High Memory Usage
 
 **Problem:** Container using too much RAM
 
@@ -379,8 +504,20 @@ docker pull martitoci/sonarr-analyzer:latest
    ```
 
 2. **Cleanup old analyses:**
-   - Go to 📈 Historical Data → Manage Data
+   - Go to 📈 Historical Data → Manage Data (Admin only)
    - Use "Cleanup old data" feature
+
+### Master Key Lost
+
+**Problem:** Master encryption key file deleted/corrupted
+
+**Impact:**
+- All encrypted tokens become unrecoverable
+- Users must re-enter Sonarr credentials
+
+**Prevention:**
+- Always backup `/app/data` volume
+- Never delete `.master.key` file
 
 ---
 
@@ -388,28 +525,38 @@ docker pull martitoci/sonarr-analyzer:latest
 
 ### Monthly Storage Audit
 
-```bash
-# Run analysis on 1st of each month
-# Compare with previous month
-# Identify series consuming most storage
-# Decision: Re-encode or delete
+```
+1. Run analysis on 1st of each month
+2. Compare with previous month
+3. Identify series consuming most storage
+4. Decision: Re-encode or delete
 ```
 
 ### Pre/Post Re-encoding Comparison
 
-```bash
-# Before re-encoding: Run analysis
-# Re-encode series with high Z-scores
-# After re-encoding: Run analysis again
-# Compare dates to see savings
+```
+1. Before re-encoding: Run analysis
+2. Re-encode series with high Z-scores
+3. After re-encoding: Run analysis again
+4. Compare dates to see savings (in GB with 2 decimals!)
 ```
 
 ### Library Growth Tracking
 
-```bash
-# Weekly/monthly analyses
-# Monitor storage evolution chart
-# Plan storage upgrades proactively
+```
+1. Weekly/monthly analyses
+2. Monitor storage evolution chart
+3. Plan storage upgrades proactively
+4. Track which series are growing fastest
+```
+
+### Multi-User Environment
+
+```
+1. Admin creates accounts for family members
+2. Each user configures their own Sonarr instance
+3. Read-only users can view but not modify
+4. Separate histories per user
 ```
 
 ---
@@ -421,37 +568,36 @@ If you want to build the image locally:
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/sonarr-analyzer.git
-cd sonarr-analyzer/docker_publish
+cd sonarr-analyzer
 
 # Build the image
-docker build -t martitoci/sonarr-analyzer:latest .
+docker build -t sonarr-analyzer:v0.3 .
 
 # Run your build
 docker run -d \
   --name sonarr-analyzer \
   -p 8501:8501 \
   -v sonarr-data:/app/data \
-  martitoci/sonarr-analyzer:latest
+  sonarr-analyzer:v0.3
 ```
-
----
-
-## 🔄 Automated Builds
-
-This repository is connected to Docker Hub for **automated builds**:
-
-- ✅ **Push to GitHub** → Automatic build on Docker Hub
-- ✅ **Multi-architecture** support (amd64, arm64)
-- ✅ **Automated testing** before deployment
-- ✅ **Tagged releases** for version control
-
-**Docker Hub:** https://hub.docker.com/r/martitoci/sonarr-analyzer
 
 ---
 
 ## 📝 Version History
 
-### v2.0.0 - Extended Edition (Latest)
+### v0.3.0 (Current)
+- ➕ Added user authentication with bcrypt
+- ➕ Added role-based access control (admin/read-only)
+- ➕ Added per-user encrypted token storage (Fernet)
+- ➕ Added first-run admin creation flow
+- ➕ Added user management (admin only)
+- ➕ Added 60+ comprehensive unit tests
+- ➕ Added two decimal place formatting for all sizes
+- 🔧 Improved security with master key encryption
+- 🔧 Improved UI with login/logout functionality
+- 🔧 Improved data isolation between users
+
+### v0.2.0
 - ➕ Added credential encryption (AES-256)
 - ➕ Added SQLite historical database
 - ➕ Added date comparison feature
@@ -462,7 +608,7 @@ This repository is connected to Docker Hub for **automated builds**:
 - 🔧 Improved UI navigation
 - 🐳 Enhanced Docker support
 
-### v1.0.0 - Standard Edition
+### v0.1.0
 - Initial release
 - Current analysis
 - Z-score detection
@@ -477,8 +623,9 @@ This repository is connected to Docker Hub for **automated builds**:
 Contributions are welcome! Please:
 1. Fork the repository
 2. Create feature branch
-3. Test thoroughly
-4. Submit pull request
+3. Add tests for new features
+4. Test thoroughly (run pytest)
+5. Submit pull request
 
 ---
 
@@ -492,8 +639,10 @@ MIT License - See LICENSE file for details
 
 - **Streamlit** - Web framework
 - **Plotly** - Interactive charts
-- **Cryptography** - Secure encryption
+- **Cryptography** - Secure encryption (Fernet)
+- **Bcrypt** - Password hashing
 - **Pandas** - Data analysis
+- **Pytest** - Testing framework
 - **Sonarr Team** - Amazing media management
 
 ---
@@ -503,7 +652,7 @@ MIT License - See LICENSE file for details
 - 🐳 **Docker Hub:** https://hub.docker.com/r/martitoci/sonarr-analyzer
 - 📧 **Issues:** GitHub Issues
 - 💬 **Discussions:** GitHub Discussions
-- 📖 **Documentation:** Full docs in repository
+- 📖 **Documentation:** This README + `/tests/README.md`
 
 ---
 
@@ -528,6 +677,9 @@ docker rm sonarr-analyzer
 # Backup data
 docker run --rm -v sonarr-data:/data -v $(pwd):/backup alpine tar czf /backup/backup.tar.gz -C /data .
 
+# Run tests (if building from source)
+pytest -v tests/
+
 # Update to latest
 docker pull martitoci/sonarr-analyzer:latest
 docker stop sonarr-analyzer
@@ -539,8 +691,8 @@ docker run -d --name sonarr-analyzer -p 8501:8501 -v sonarr-data:/app/data marti
 
 **Made with ❤️ for the Sonarr community**
 
-*Track, compare, and optimize your Sonarr library!* 📊✨
+*Secure, analyze, and optimize your Sonarr library with confidence!* 📊✨
+
+**Version 0.3 - Now with Authentication & Role-Based Access!**
 
 **Docker Hub:** https://hub.docker.com/r/martitoci/sonarr-analyzer
-
-

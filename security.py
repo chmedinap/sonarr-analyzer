@@ -1,241 +1,267 @@
 """
-Security module for encrypting and managing Sonarr credentials.
-Uses Fernet symmetric encryption (AES-128) from cryptography library.
+Security module for encrypting and managing per-user Sonarr credentials.
+Uses Fernet symmetric encryption (AES-128) with a master encryption key.
 """
 
 import os
 import json
 import base64
+import sqlite3
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 from cryptography.fernet import Fernet, InvalidToken
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 
-class CredentialManager:
-    """Manages encrypted storage of Sonarr credentials."""
+class TokenManager:
+    """Manages encrypted storage of per-user Sonarr API tokens."""
     
-    def __init__(self, credentials_file: str = ".sonarr_credentials.enc"):
+    def __init__(self, db_path: str = "data/tokens.db", key_file: str = "data/.master.key"):
         """
-        Initialize credential manager.
+        Initialize token manager with master encryption key.
         
         Args:
-            credentials_file: Path to encrypted credentials file
+            db_path: Path to SQLite database for encrypted tokens
+            key_file: Path to master encryption key file
         """
-        self.credentials_file = Path(credentials_file)
-        self.salt_file = Path(".sonarr_salt")
-    
-    def _derive_key(self, passphrase: str, salt: bytes) -> bytes:
-        """
-        Derive encryption key from passphrase using PBKDF2.
+        self.db_path = Path(db_path)
+        self.key_file = Path(key_file)
+        self.db_path.parent.mkdir(exist_ok=True)
+        self.key_file.parent.mkdir(exist_ok=True)
         
-        Args:
-            passphrase: User's master passphrase
-            salt: Random salt for key derivation
-            
-        Returns:
-            Derived encryption key
-        """
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=100000,
-        )
-        key = base64.urlsafe_b64encode(kdf.derive(passphrase.encode()))
-        return key
+        # Initialize or load master key
+        self.master_key = self._get_or_create_master_key()
+        self.fernet = Fernet(self.master_key)
+        
+        # Initialize database
+        self._init_database()
     
-    def _get_or_create_salt(self) -> bytes:
+    def _get_or_create_master_key(self) -> bytes:
         """
-        Get existing salt or create new one.
+        Get existing master key or create a new one.
+        The master key is used to encrypt all user tokens.
         
         Returns:
-            Salt bytes
+            Master encryption key
         """
-        if self.salt_file.exists():
-            with open(self.salt_file, 'rb') as f:
+        if self.key_file.exists():
+            with open(self.key_file, 'rb') as f:
                 return f.read()
         else:
-            salt = os.urandom(16)
-            with open(self.salt_file, 'wb') as f:
-                f.write(salt)
-            # Set restrictive permissions
-            os.chmod(self.salt_file, 0o600)
-            return salt
+            # Generate new Fernet key
+            key = Fernet.generate_key()
+            
+            # Save to file with restrictive permissions
+            with open(self.key_file, 'wb') as f:
+                f.write(key)
+            
+            # Set restrictive permissions (Unix-like systems)
+            try:
+                os.chmod(self.key_file, 0o600)
+            except:
+                pass  # Windows doesn't support chmod
+            
+            return key
     
-    def save_credentials(
+    def _init_database(self):
+        """Create tokens database table if it doesn't exist."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_tokens (
+                user_id INTEGER PRIMARY KEY,
+                sonarr_url TEXT NOT NULL,
+                encrypted_token TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        
+        conn.commit()
+        conn.close()
+    
+    def save_token(
         self,
-        base_url: str,
-        api_key: str,
-        passphrase: str
+        user_id: int,
+        sonarr_url: str,
+        api_token: str
     ) -> Tuple[bool, str]:
         """
-        Encrypt and save Sonarr credentials.
+        Encrypt and save Sonarr token for a user.
         
         Args:
-            base_url: Sonarr base URL
-            api_key: Sonarr API key
-            passphrase: Master passphrase for encryption
+            user_id: User ID
+            sonarr_url: Sonarr base URL
+            api_token: Sonarr API key/token
             
         Returns:
             Tuple of (success, message)
         """
         try:
             # Validate inputs
-            if not base_url or not api_key:
-                return False, "URL and API key cannot be empty"
-            
-            if len(passphrase) < 8:
-                return False, "Passphrase must be at least 8 characters"
-            
-            # Get or create salt
-            salt = self._get_or_create_salt()
-            
-            # Derive encryption key
-            key = self._derive_key(passphrase, salt)
-            fernet = Fernet(key)
+            if not sonarr_url or not api_token:
+                return False, "URL and API token cannot be empty"
             
             # Prepare data
             data = {
-                'base_url': base_url,
-                'api_key': api_key
+                'sonarr_url': sonarr_url,
+                'api_token': api_token
             }
             
             # Encrypt
             json_data = json.dumps(data).encode()
-            encrypted_data = fernet.encrypt(json_data)
+            encrypted_data = self.fernet.encrypt(json_data)
             
-            # Save to file
-            with open(self.credentials_file, 'wb') as f:
-                f.write(encrypted_data)
+            # Save to database
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
             
-            # Set restrictive permissions (Unix-like systems)
-            try:
-                os.chmod(self.credentials_file, 0o600)
-            except:
-                pass  # Windows doesn't support chmod
+            from datetime import datetime
             
-            return True, "Credentials saved successfully"
+            cursor.execute("""
+                INSERT OR REPLACE INTO user_tokens (user_id, sonarr_url, encrypted_token, updated_at)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, sonarr_url, encrypted_data.decode('utf-8'), datetime.now().isoformat()))
+            
+            conn.commit()
+            conn.close()
+            
+            return True, "Sonarr token saved successfully"
             
         except Exception as e:
-            return False, f"Error saving credentials: {str(e)}"
+            return False, f"Error saving token: {str(e)}"
     
-    def load_credentials(
+    def load_token(
         self,
-        passphrase: str
-    ) -> Tuple[bool, Optional[dict], str]:
+        user_id: int
+    ) -> Tuple[bool, Optional[Dict], str]:
         """
-        Decrypt and load Sonarr credentials.
+        Decrypt and load Sonarr token for a user.
         
         Args:
-            passphrase: Master passphrase for decryption
+            user_id: User ID
             
         Returns:
             Tuple of (success, credentials_dict, message)
         """
         try:
-            # Check if credentials file exists
-            if not self.credentials_file.exists():
-                return False, None, "No saved credentials found"
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
             
-            if not self.salt_file.exists():
-                return False, None, "Encryption salt file not found"
+            cursor.execute("""
+                SELECT sonarr_url, encrypted_token
+                FROM user_tokens
+                WHERE user_id = ?
+            """, (user_id,))
             
-            # Read salt
-            with open(self.salt_file, 'rb') as f:
-                salt = f.read()
+            row = cursor.fetchone()
+            conn.close()
             
-            # Derive key
-            key = self._derive_key(passphrase, salt)
-            fernet = Fernet(key)
+            if not row:
+                return False, None, "No Sonarr token found for this user"
             
-            # Read encrypted data
-            with open(self.credentials_file, 'rb') as f:
-                encrypted_data = f.read()
+            sonarr_url, encrypted_token = row
             
             # Decrypt
             try:
-                decrypted_data = fernet.decrypt(encrypted_data)
-                credentials = json.loads(decrypted_data.decode())
+                decrypted_data = self.fernet.decrypt(encrypted_token.encode('utf-8'))
+                data = json.loads(decrypted_data.decode())
                 
-                return True, credentials, "Credentials loaded successfully"
+                return True, data, "Token loaded successfully"
                 
             except InvalidToken:
-                return False, None, "Invalid passphrase"
+                return False, None, "Invalid encryption key"
             
         except Exception as e:
-            return False, None, f"Error loading credentials: {str(e)}"
+            return False, None, f"Error loading token: {str(e)}"
     
-    def credentials_exist(self) -> bool:
+    def has_token(self, user_id: int) -> bool:
         """
-        Check if encrypted credentials file exists.
+        Check if user has a saved token.
         
+        Args:
+            user_id: User ID
+            
         Returns:
-            True if credentials are saved
+            True if user has a saved token
         """
-        return self.credentials_file.exists() and self.salt_file.exists()
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM user_tokens WHERE user_id = ?
+            """, (user_id,))
+            
+            count = cursor.fetchone()[0]
+            conn.close()
+            
+            return count > 0
+            
+        except Exception:
+            return False
     
-    def delete_credentials(self) -> Tuple[bool, str]:
+    def delete_token(self, user_id: int) -> Tuple[bool, str]:
         """
-        Delete saved credentials and salt files.
+        Delete saved token for a user.
         
+        Args:
+            user_id: User ID
+            
         Returns:
             Tuple of (success, message)
         """
         try:
-            deleted_files = []
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
             
-            if self.credentials_file.exists():
-                self.credentials_file.unlink()
-                deleted_files.append("credentials")
+            cursor.execute("DELETE FROM user_tokens WHERE user_id = ?", (user_id,))
             
-            if self.salt_file.exists():
-                self.salt_file.unlink()
-                deleted_files.append("salt")
+            deleted = cursor.rowcount > 0
+            conn.commit()
+            conn.close()
             
-            if deleted_files:
-                return True, f"Deleted: {', '.join(deleted_files)}"
+            if deleted:
+                return True, "Token deleted successfully"
             else:
-                return True, "No credentials found to delete"
+                return True, "No token found to delete"
                 
         except Exception as e:
-            return False, f"Error deleting credentials: {str(e)}"
+            return False, f"Error deleting token: {str(e)}"
 
 
-def test_encryption():
-    """Test encryption/decryption functionality."""
-    print("Testing credential encryption...")
+def test_token_manager():
+    """Test token encryption/decryption functionality."""
+    print("Testing TokenManager...")
     
-    manager = CredentialManager(".test_creds.enc")
+    manager = TokenManager("test_tokens.db", "test_master.key")
     
     # Test data
+    test_user_id = 1
     test_url = "http://localhost:8989"
-    test_key = "test_api_key_12345"
-    test_pass = "my_secure_password"
+    test_token = "test_api_token_12345"
     
-    # Save
-    success, msg = manager.save_credentials(test_url, test_key, test_pass)
-    print(f"Save: {success} - {msg}")
+    # Save token
+    success, msg = manager.save_token(test_user_id, test_url, test_token)
+    print(f"Save token: {success} - {msg}")
     
-    # Load with correct passphrase
-    success, creds, msg = manager.load_credentials(test_pass)
-    print(f"Load (correct): {success} - {msg}")
+    # Check if token exists
+    has_token = manager.has_token(test_user_id)
+    print(f"Has token: {has_token}")
+    
+    # Load token
+    success, data, msg = manager.load_token(test_user_id)
+    print(f"Load token: {success} - {msg}")
     if success:
-        print(f"  URL: {creds['base_url']}")
-        print(f"  Key: {'*' * 20}{creds['api_key'][-4:]}")
+        print(f"  URL: {data['sonarr_url']}")
+        print(f"  Token: {'*' * 20}{data['api_token'][-4:]}")
     
-    # Load with wrong passphrase
-    success, creds, msg = manager.load_credentials("wrong_password")
-    print(f"Load (wrong): {success} - {msg}")
-    
-    # Delete
-    success, msg = manager.delete_credentials()
-    print(f"Delete: {success} - {msg}")
+    # Delete token
+    success, msg = manager.delete_token(test_user_id)
+    print(f"Delete token: {success} - {msg}")
     
     print("\nTest complete!")
 
 
 if __name__ == "__main__":
-    test_encryption()
+    test_token_manager()
 
