@@ -23,12 +23,21 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
+# Install su-exec for secure privilege dropping (lightweight alternative to gosu)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    su-exec \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
 
 # Copy Python dependencies from builder
 COPY --from=builder /root/.local /home/appuser/.local
+
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Copy application code
 COPY app.py .
@@ -55,9 +64,6 @@ ENV PATH=/home/appuser/.local/bin:$PATH \
     STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
     STREAMLIT_SERVER_FILE_WATCHER_TYPE=none
 
-# Switch to non-root user
-USER appuser
-
 # Expose Streamlit port
 EXPOSE 8501
 
@@ -68,7 +74,10 @@ VOLUME ["/app/data"]
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5)" || exit 1
 
-# Run the application
+# Use entrypoint to handle permissions and drop privileges
+ENTRYPOINT ["docker-entrypoint.sh"]
+
+# Run the application (will be executed by entrypoint as appuser)
 CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
 
 

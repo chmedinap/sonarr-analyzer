@@ -32,8 +32,12 @@ services:
     # - Historical analysis data (sonarr_history.db)
     volumes:
       - sonarr-data:/app/data
-      # Or use local directory:
+      
+      # Or use bind mount (host directory):
+      # IMPORTANT: For bind mounts, the directory must be writable by UID 1000
+      # On Linux/macOS, run: sudo chown -R 1000:1000 ./data
       # - ./data:/app/data
+      # - /mnt/storage/sonarr_analyzer:/app/data
     
     restart: unless-stopped
     

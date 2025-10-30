@@ -22,6 +22,15 @@ class HistoryDatabase:
             db_path: Path to SQLite database file
         """
         self.db_path = Path(db_path)
+        # Ensure parent directory exists with proper permissions
+        try:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        except PermissionError as e:
+            raise PermissionError(
+                f"Cannot create directory {self.db_path.parent}. "
+                f"Please ensure the data directory is writable by UID 1000 (appuser). "
+                f"For bind mounts, run: sudo chown -R 1000:1000 /path/to/data"
+            ) from e
         self._init_database()
     
     def _init_database(self):

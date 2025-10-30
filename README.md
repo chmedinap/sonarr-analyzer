@@ -336,11 +336,20 @@ docker run --rm \
   alpine tar xzf /backup/sonarr-data-backup.tar.gz -C /data
 ```
 
-### Using Local Directory
+### Using Local Directory (Bind Mount)
+
+Bind mounts allow you to use a specific directory on your host machine:
 
 ```bash
 # Create local directory
 mkdir -p ./sonarr-data
+
+# Set proper ownership (UID 1000 = appuser in container)
+# Linux/macOS:
+sudo chown -R 1000:1000 ./sonarr-data
+
+# Windows WSL2:
+sudo chown -R 1000:1000 ./sonarr-data
 
 # Run with local mount
 docker run -d \
@@ -349,6 +358,19 @@ docker run -d \
   -v $(pwd)/sonarr-data:/app/data \
   martitoci/sonarr-analyzer:latest
 ```
+
+**Files will be in:** `./sonarr-data/`
+
+**⚠️ Important Notes for Bind Mounts:**
+- The container runs as UID 1000 (appuser) for security
+- The mounted directory must be writable by UID 1000
+- If you see "unable to open database file" errors:
+  ```bash
+  # Fix permissions on your host:
+  sudo chown -R 1000:1000 /path/to/your/data
+  ```
+- The entrypoint script will attempt to fix permissions automatically
+- For maximum compatibility, use named volumes instead of bind mounts
 
 ---
 
@@ -469,6 +491,47 @@ docker pull martitoci/sonarr-analyzer:latest
 1. Verify credentials (case-sensitive)
 2. If forgotten, no password recovery yet - need to recreate user database
 3. Check logs: `docker logs sonarr-analyzer`
+
+### Database Permission Error with Bind Mounts
+
+**Problem:** "OperationalError: unable to open database file" when using bind mount
+
+**Solutions:**
+1. **Fix ownership on host:**
+   ```bash
+   # Find your bind mount path from docker-compose.yml or docker run command
+   sudo chown -R 1000:1000 /path/to/your/data
+   
+   # Example for ./data:
+   sudo chown -R 1000:1000 ./data
+   ```
+
+2. **Verify permissions:**
+   ```bash
+   ls -la /path/to/your/data
+   # Should show: drwxr-xr-x ... 1000 1000 ...
+   ```
+
+3. **Check container logs:**
+   ```bash
+   docker logs sonarr-analyzer
+   # Look for permission warnings from entrypoint
+   ```
+
+4. **Alternative - Use named volume instead:**
+   ```bash
+   # Named volumes handle permissions automatically
+   docker run -d \
+     --name sonarr-analyzer \
+     -p 8501:8501 \
+     -v sonarr-data:/app/data \
+     martitoci/sonarr-analyzer:latest
+   ```
+
+5. **For NFS/CIFS/Network mounts:**
+   - Ensure the network share allows UID 1000 to write
+   - Add `uid=1000,gid=1000` to mount options if possible
+   - Consider using named volumes with Docker volume drivers
 
 ### Cannot Connect to Sonarr
 

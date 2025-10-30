@@ -25,8 +25,17 @@ class TokenManager:
         """
         self.db_path = Path(db_path)
         self.key_file = Path(key_file)
-        self.db_path.parent.mkdir(exist_ok=True)
-        self.key_file.parent.mkdir(exist_ok=True)
+        
+        # Ensure parent directories exist with proper permissions
+        try:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self.key_file.parent.mkdir(parents=True, exist_ok=True)
+        except PermissionError as e:
+            raise PermissionError(
+                f"Cannot create data directory. "
+                f"Please ensure the data directory is writable by UID 1000 (appuser). "
+                f"For bind mounts, run: sudo chown -R 1000:1000 /path/to/data"
+            ) from e
         
         # Initialize or load master key
         self.master_key = self._get_or_create_master_key()
