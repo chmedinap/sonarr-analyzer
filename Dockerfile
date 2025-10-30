@@ -23,10 +23,36 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install su-exec for secure privilege dropping (lightweight alternative to gosu)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    su-exec \
-    && rm -rf /var/lib/apt/lists/*
+# Install gosu for secure privilege dropping (Debian compatible)
+# gosu is the standard tool for dropping privileges in Debian-based images
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        wget \
+    ; \
+    rm -rf /var/lib/apt/lists/*; \
+    \
+    # Install gosu from official GitHub releases
+    dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
+    wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.17/gosu-$dpkgArch"; \
+    wget -O /usr/local/bin/gosu.asc "https://github.com/tianon/gosu/releases/download/1.17/gosu-$dpkgArch.asc"; \
+    \
+    # Verify gosu signature
+    export GNUPGHOME="$(mktemp -d)"; \
+    gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4; \
+    gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \
+    gpgconf --kill all; \
+    rm -rf "$GNUPGHOME" /usr/local/bin/gosu.asc; \
+    \
+    # Make gosu executable
+    chmod +x /usr/local/bin/gosu; \
+    # Verify gosu works
+    gosu --version; \
+    gosu nobody true; \
+    \
+    # Clean up wget and ca-certificates if not needed
+    apt-get purge -y --auto-remove wget
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && \

@@ -36,8 +36,8 @@ if [ "$(id -u)" = "0" ]; then
     echo "✅ Permissions configured"
     echo "👤 Switching to appuser (UID 1000)..."
     
-    # Drop privileges and run as appuser
-    exec su-exec appuser "$@"
+    # Drop privileges and run as appuser using gosu
+    exec gosu appuser "$@"
 else
     echo "👤 Running as appuser (UID $(id -u))"
     

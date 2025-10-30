@@ -179,7 +179,7 @@ rm -rf ./test-data ./test-bad
 - Entrypoint only runs as root briefly to fix permissions
 - Immediately drops privileges before starting app
 - No `chmod 777` or world-writable permissions
-- Uses `su-exec` (more secure than `su`)
+- Uses `gosu` (official privilege-dropping tool for Debian)
 
 ✅ **Follows Best Practices:**
 - Principle of least privilege

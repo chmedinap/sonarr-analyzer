@@ -562,6 +562,44 @@ docker pull martitoci/sonarr-analyzer:latest
    ```
 3. **Restore from backup** if corruption persists
 
+### Build Fails in Codespaces/CI
+
+**Problem:** Docker build fails with "package not found" or network errors
+
+**Solutions:**
+1. **Ensure internet access:**
+   ```bash
+   # Test connectivity
+   wget -q --spider https://github.com
+   echo $?  # Should output 0
+   ```
+
+2. **Check Docker daemon:**
+   ```bash
+   docker version
+   docker info
+   ```
+
+3. **Clear Docker cache:**
+   ```bash
+   docker system prune -a
+   docker build --no-cache -t sonarr-analyzer .
+   ```
+
+4. **If gosu download fails:**
+   - The build downloads gosu from GitHub releases
+   - Requires internet access during build
+   - Check GitHub status: https://www.githubstatus.com/
+
+5. **For corporate proxies:**
+   ```bash
+   # Set proxy for Docker build
+   docker build \
+     --build-arg HTTP_PROXY=http://proxy:8080 \
+     --build-arg HTTPS_PROXY=http://proxy:8080 \
+     -t sonarr-analyzer .
+   ```
+
 ### High Memory Usage
 
 **Problem:** Container using too much RAM
@@ -655,6 +693,20 @@ docker run -d \
   -v sonarr-data:/app/data \
   sonarr-analyzer:v0.3
 ```
+
+### Building in GitHub Codespaces
+
+The Dockerfile is fully compatible with GitHub Codespaces:
+
+```bash
+# In Codespaces terminal
+docker build -t sonarr-analyzer:v0.3 .
+
+# Or use docker-compose
+docker-compose build
+```
+
+**Note:** The build process downloads `gosu` from GitHub releases for privilege management. This works reliably in Codespaces and all CI/CD environments.
 
 ---
 
