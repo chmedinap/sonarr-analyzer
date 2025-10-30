@@ -586,10 +586,11 @@ docker pull martitoci/sonarr-analyzer:latest
    docker build --no-cache -t sonarr-analyzer .
    ```
 
-4. **If gosu download fails:**
-   - The build downloads gosu from GitHub releases
-   - Requires internet access during build
-   - Check GitHub status: https://www.githubstatus.com/
+4. **If gosu download or verification fails:**
+   - The build downloads gosu from GitHub releases and verifies its GPG signature
+   - Requires internet access during build (for downloading gosu and fetching GPG keys)
+   - If verification fails, check GitHub status: https://www.githubstatus.com/
+   - The build installs `gnupg` temporarily for signature verification, then removes it
 
 5. **For corporate proxies:**
    ```bash
@@ -706,7 +707,7 @@ docker build -t sonarr-analyzer:v0.3 .
 docker-compose build
 ```
 
-**Note:** The build process downloads `gosu` from GitHub releases for privilege management. This works reliably in Codespaces and all CI/CD environments.
+**Note:** The build process downloads `gosu` from GitHub releases for privilege management. During build, `gnupg` is temporarily installed to verify the gosu signature, then removed to keep the image slim. This works reliably in Codespaces and all CI/CD environments.
 
 ---
 

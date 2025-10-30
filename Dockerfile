@@ -29,6 +29,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ca-certificates \
+        gnupg \
         wget \
     ; \
     rm -rf /var/lib/apt/lists/*; \
@@ -38,7 +39,7 @@ RUN set -eux; \
     wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.17/gosu-$dpkgArch"; \
     wget -O /usr/local/bin/gosu.asc "https://github.com/tianon/gosu/releases/download/1.17/gosu-$dpkgArch.asc"; \
     \
-    # Verify gosu signature
+    # Verify gosu signature (security best practice)
     export GNUPGHOME="$(mktemp -d)"; \
     gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4; \
     gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \
@@ -51,8 +52,13 @@ RUN set -eux; \
     gosu --version; \
     gosu nobody true; \
     \
-    # Clean up wget and ca-certificates if not needed
-    apt-get purge -y --auto-remove wget
+    # Clean up build dependencies to keep image slim
+    apt-get purge -y --auto-remove \
+        ca-certificates \
+        gnupg \
+        wget \
+    ; \
+    rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && \

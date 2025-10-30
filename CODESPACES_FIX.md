@@ -10,18 +10,29 @@ apt-get install -y --no-install-recommends su-exec && rm -rf /var/lib/apt/lists/
 did not complete successfully: exit code: 100
 ```
 
-## Root Cause
+## Root Causes
+
+### Issue 1: `su-exec` Package Not Found
 
 **`su-exec` is an Alpine Linux package and does NOT exist in Debian repositories.**
 
 The base image `python:3.11-slim` is Debian-based (specifically Debian Bookworm), so trying to install `su-exec` via `apt-get` fails because the package doesn't exist in Debian repos.
 
-### Why This Happened
-
-The original implementation assumed `su-exec` was available in all Linux distributions, but:
+**Why This Happened:**
 - ✅ Alpine Linux: `su-exec` available via `apk`
 - ❌ Debian/Ubuntu: `su-exec` does NOT exist in `apt` repos
 - ✅ Debian/Ubuntu: `gosu` is the recommended alternative
+
+### Issue 2: GPG Not Found
+
+After switching to `gosu`, a second issue appeared:
+```
+/bin/sh: 1: gpg: not found
+```
+
+**Why:** The `python:3.11-slim` base image doesn't include `gnupg` by default. It's needed to verify the gosu binary's GPG signature for security.
+
+**Solution:** Install `gnupg` temporarily during build, use it for verification, then remove it to keep the image slim.
 
 ## Solution
 
@@ -46,6 +57,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ca-certificates \
+        gnupg \
         wget \
     ; \
     rm -rf /var/lib/apt/lists/*; \
@@ -68,17 +80,24 @@ RUN set -eux; \
     gosu --version; \
     gosu nobody true; \
     \
-    # Clean up build dependencies
-    apt-get purge -y --auto-remove wget
+    # Clean up build dependencies to keep image slim
+    apt-get purge -y --auto-remove \
+        ca-certificates \
+        gnupg \
+        wget \
+    ; \
+    rm -rf /var/lib/apt/lists/*
 ```
 
 **Key Improvements:**
 - ✅ Uses `set -eux` for better error handling
 - ✅ Downloads from official GitHub releases (works anywhere with internet)
+- ✅ Installs `gnupg` temporarily for signature verification
 - ✅ Verifies GPG signature for security
 - ✅ Tests that gosu works before proceeding
 - ✅ Auto-detects architecture (amd64, arm64, etc.)
-- ✅ Cleans up build dependencies to keep image small
+- ✅ Removes all build dependencies (`gnupg`, `wget`, `ca-certificates`) to keep image small
+- ✅ Everything happens in one RUN layer for optimal image size
 
 #### 2. **docker-entrypoint.sh** - Use `gosu` Instead of `su-exec`
 
